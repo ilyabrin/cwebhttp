@@ -645,6 +645,27 @@ cwh_error_t cwh_parse_res(const char *buf, size_t len, cwh_response_t *res)
     {
         res->body = (char *)p;
         res->body_len = end - p;
+
+        // Check if Transfer-Encoding: chunked
+        const char *transfer_encoding = cwh_get_res_header(res, "Transfer-Encoding");
+        if (transfer_encoding && strncasecmp(transfer_encoding, "chunked", 7) == 0)
+        {
+            // Decode chunked body in-place
+            // NOTE: This modifies the buffer, but that's acceptable since we own it
+            static char decoded_buf[16384]; // Static buffer for decoded data
+            size_t decoded_len = 0;
+
+            cwh_error_t err = cwh_decode_chunked(res->body, res->body_len, decoded_buf, &decoded_len);
+            if (err == CWH_OK)
+            {
+                // Update body to point to decoded data
+                // IMPORTANT: decoded_buf is static, so this is safe as long as
+                // response is used before next cwh_parse_res call
+                memcpy((char *)res->body, decoded_buf, decoded_len);
+                res->body_len = decoded_len;
+            }
+            // If decode fails, keep original chunked body (graceful degradation)
+        }
     }
 
     return CWH_OK;
@@ -922,6 +943,129 @@ cwh_error_t cwh_parse_url(const char *url, size_t len, cwh_url_t *parsed)
     }
 
     parsed->is_valid = true;
+    return CWH_OK;
+}
+
+// ============================================================================
+// Chunked Transfer Encoding (RFC 7230 Section 4.1)
+// ============================================================================
+
+// Decode chunked transfer encoding
+// Format: <chunk-size-hex>\r\n<chunk-data>\r\n ... 0\r\n\r\n
+cwh_error_t cwh_decode_chunked(const char *chunked_body, size_t chunked_len,
+                                 char *out_buf, size_t *out_len)
+{
+    if (!chunked_body || !out_buf || !out_len)
+        return CWH_ERR_PARSE;
+
+    const char *p = chunked_body;
+    const char *end = chunked_body + chunked_len;
+    size_t total_decoded = 0;
+
+    while (p < end)
+    {
+        // Parse chunk size (hexadecimal)
+        size_t chunk_size = 0;
+
+        // Read hex digits
+        while (p < end && *p != '\r')
+        {
+            char c = *p;
+            if (c >= '0' && c <= '9')
+                chunk_size = chunk_size * 16 + (c - '0');
+            else if (c >= 'a' && c <= 'f')
+                chunk_size = chunk_size * 16 + (c - 'a' + 10);
+            else if (c >= 'A' && c <= 'F')
+                chunk_size = chunk_size * 16 + (c - 'A' + 10);
+            else if (c == ';')
+            {
+                // Chunk extension - skip until CRLF
+                while (p < end && *p != '\r')
+                    p++;
+                break;
+            }
+            else
+                return CWH_ERR_PARSE; // Invalid hex character
+
+            p++;
+        }
+
+        // Expect CRLF after chunk size
+        if (p + 1 >= end || p[0] != '\r' || p[1] != '\n')
+            return CWH_ERR_PARSE;
+        p += 2;
+
+        // Check for last chunk (size 0)
+        if (chunk_size == 0)
+        {
+            // Last chunk - expect optional trailers then final CRLF
+            // For simplicity, skip trailers and just look for final CRLF
+            if (p + 1 < end && p[0] == '\r' && p[1] == '\n')
+                p += 2;
+            break;
+        }
+
+        // Read chunk data
+        if (p + chunk_size > end)
+            return CWH_ERR_PARSE; // Chunk size exceeds remaining data
+
+        // Copy chunk data to output
+        memcpy(out_buf + total_decoded, p, chunk_size);
+        total_decoded += chunk_size;
+        p += chunk_size;
+
+        // Expect CRLF after chunk data
+        if (p + 1 >= end || p[0] != '\r' || p[1] != '\n')
+            return CWH_ERR_PARSE;
+        p += 2;
+    }
+
+    *out_len = total_decoded;
+    return CWH_OK;
+}
+
+// Encode data as chunked transfer encoding
+// Format: <chunk-size-hex>\r\n<chunk-data>\r\n ... 0\r\n\r\n
+cwh_error_t cwh_encode_chunked(const char *body, size_t body_len,
+                                 char *out_buf, size_t *out_len)
+{
+    if (!body || !out_buf || !out_len)
+        return CWH_ERR_PARSE;
+
+    size_t offset = 0;
+    const size_t chunk_size = 4096; // Standard chunk size
+
+    // Encode body in chunks
+    size_t remaining = body_len;
+    const char *p = body;
+
+    while (remaining > 0)
+    {
+        size_t current_chunk = remaining < chunk_size ? remaining : chunk_size;
+
+        // Write chunk size in hex
+        // Use %lx for portability (cast size_t to unsigned long)
+        int hex_len = snprintf(out_buf + offset, 32, "%lx\r\n", (unsigned long)current_chunk);
+        if (hex_len < 0)
+            return CWH_ERR_PARSE;
+        offset += hex_len;
+
+        // Write chunk data
+        memcpy(out_buf + offset, p, current_chunk);
+        offset += current_chunk;
+        p += current_chunk;
+        remaining -= current_chunk;
+
+        // Write CRLF after chunk data
+        out_buf[offset++] = '\r';
+        out_buf[offset++] = '\n';
+    }
+
+    // Write final chunk (0 size)
+    memcpy(out_buf + offset, "0\r\n\r\n", 5);
+    offset += 5;
+
+    *out_len = offset;
     return CWH_OK;
 }
 

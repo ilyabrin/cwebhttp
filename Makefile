@@ -21,13 +21,14 @@ else
 	RUN_TEST = ./build/tests/$(1)
 endif
 
-all: examples build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT)
+all: examples build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT) build/tests/test_chunked$(EXE_EXT)
 
 examples: build/examples/minimal_server$(EXE_EXT) build/examples/simple_client$(EXE_EXT)
 
-test: build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT)
+test: build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT) build/tests/test_chunked$(EXE_EXT)
 	$(call RUN_TEST,test_parse)
 	$(call RUN_TEST,test_url)
+	$(call RUN_TEST,test_chunked)
 
 tests: test
 
@@ -44,6 +45,10 @@ build/tests/test_parse$(EXE_EXT): tests/test_parse.c tests/unity.c $(SRCS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 build/tests/test_url$(EXE_EXT): tests/test_url.c tests/unity.c $(SRCS)
+	@$(call MKDIR,build/tests)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+build/tests/test_chunked$(EXE_EXT): tests/test_chunked.c tests/unity.c $(SRCS)
 	@$(call MKDIR,build/tests)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
