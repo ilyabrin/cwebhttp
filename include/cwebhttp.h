@@ -29,8 +29,7 @@ typedef enum
     CWH_METHOD_NUM // для массива
 } cwh_method_t;
 
-const char *cwh_method_strs[CWH_METHOD_NUM + 1] = {
-    "GET", "POST", "PUT", "DELETE", NULL};
+extern const char *cwh_method_strs[CWH_METHOD_NUM + 1];
 
 // Структура запроса (zero-alloc: указатели в буфер)
 typedef struct

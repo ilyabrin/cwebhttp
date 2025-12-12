@@ -2,6 +2,16 @@
 #include "cwebhttp.h"
 #include <string.h>
 
+void setUp(void)
+{
+    // Set up test fixtures (if needed)
+}
+
+void tearDown(void)
+{
+    // Clean up test fixtures (if needed)
+}
+
 void test_parse_get()
 {
     char buf[] = "GET / HTTP/1.1\r\nHost: test\r\n\r\n";

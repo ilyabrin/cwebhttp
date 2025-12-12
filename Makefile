@@ -2,26 +2,54 @@ CC = gcc
 CFLAGS = -Wall -Wextra -std=c11 -O2 -Iinclude -Itests
 SRCS = src/cwebhttp.c
 
-all: examples tests
+# OS detection
+UNAME_S := $(shell uname -s 2>/dev/null || echo Windows)
+ifeq ($(UNAME_S),Windows)
+	CFLAGS += -D_WIN32
+	LDFLAGS = -lws2_32
+	MKDIR = mkdir -p $(1)
+	RM = rm -rf
+	EXE_EXT = .exe
+else ifeq ($(OS),Windows_NT)
+	CFLAGS += -D_WIN32
+	LDFLAGS = -lws2_32
+	MKDIR = mkdir -p $(1)
+	RM = rm -rf
+	EXE_EXT = .exe
+else
+	ifeq ($(UNAME_S),Linux)
+		LDFLAGS =
+	endif
+	ifeq ($(UNAME_S),Darwin)
+		LDFLAGS =
+	endif
+	MKDIR = mkdir -p $(1)
+	RM = rm -rf
+	EXE_EXT =
+endif
 
-examples: build/examples/minimal_server build/examples/simple_client
+all: examples build/tests/test_parse$(EXE_EXT)
 
-tests: build/tests/test_parse
-    ./build/tests/test_parse
+examples: build/examples/minimal_server$(EXE_EXT) build/examples/simple_client$(EXE_EXT)
 
-build/examples/minimal_server: examples/minimal_server.c $(SRCS)
-    mkdir -p build/examples
-    $(CC) $(CFLAGS) $^ -o $@
+test: build/tests/test_parse$(EXE_EXT)
+	./build/tests/test_parse$(EXE_EXT)
 
-build/examples/simple_client: examples/simple_client.c $(SRCS)
-    mkdir -p build/examples
-    $(CC) $(CFLAGS) $^ -o $@
+tests: test
 
-build/tests/test_parse: tests/test_parse.c tests/unity.c $(SRCS)
-    mkdir -p build/tests
-    $(CC) $(CFLAGS) $^ -o $@
+build/examples/minimal_server$(EXE_EXT): examples/minimal_server.c $(SRCS)
+	@$(call MKDIR,build/examples)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+build/examples/simple_client$(EXE_EXT): examples/simple_client.c $(SRCS)
+	@$(call MKDIR,build/examples)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+build/tests/test_parse$(EXE_EXT): tests/test_parse.c tests/unity.c $(SRCS)
+	@$(call MKDIR,build/tests)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 clean:
-    rm -rf build
+	$(RM) build
 
-.PHONY: all examples tests clean
+.PHONY: all examples test tests clean

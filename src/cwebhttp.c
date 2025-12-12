@@ -1,10 +1,21 @@
 #include "cwebhttp.h"
 #include <stdio.h>
 #include <string.h>
+
+#if defined(_WIN32) || defined(_WIN64)
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib")
+#else
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h> // для Linux/macOS
 #include <unistd.h>    // close
+#endif
+
+// Definition of cwh_method_strs
+const char *cwh_method_strs[CWH_METHOD_NUM + 1] = {
+    "GET", "POST", "PUT", "DELETE", NULL};
 
 // Dummy connect (реальный потом с getaddrinfo)
 cwh_conn_t *cwh_connect(const char *url, int timeout_ms)
@@ -65,7 +76,7 @@ cwh_error_t cwh_parse_req(const char *buf, size_t len, cwh_request_t *req)
 
 cwh_error_t cwh_format_res(char *buf, size_t *out_len, const cwh_response_t *res)
 {
-    snprintf(buf, 1024, "HTTP/1.1 %d OK\r\nContent-Length: %zu\r\n\r\n", res->status, res->body_len);
+    snprintf(buf, 1024, "HTTP/1.1 %d OK\r\nContent-Length: %llu\r\n\r\n", res->status, (unsigned long long)res->body_len);
     *out_len = strlen(buf) + res->body_len;
     strcat(buf, res->body);
     return CWH_OK;
@@ -96,7 +107,11 @@ cwh_error_t cwh_run(cwh_server_t *srv)
 {
     (void)srv;
     printf("Dummy server running...\n");
-    sleep(5); // dummy loop
+#if defined(_WIN32) || defined(_WIN64)
+    Sleep(5000); // Windows Sleep takes milliseconds
+#else
+    sleep(5); // Unix sleep takes seconds
+#endif
     return CWH_OK;
 }
 
