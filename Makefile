@@ -28,12 +28,13 @@ else
 	EXE_EXT =
 endif
 
-all: examples build/tests/test_parse$(EXE_EXT)
+all: examples build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT)
 
 examples: build/examples/minimal_server$(EXE_EXT) build/examples/simple_client$(EXE_EXT)
 
-test: build/tests/test_parse$(EXE_EXT)
+test: build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT)
 	./build/tests/test_parse$(EXE_EXT)
+	./build/tests/test_url$(EXE_EXT)
 
 tests: test
 
@@ -46,6 +47,10 @@ build/examples/simple_client$(EXE_EXT): examples/simple_client.c $(SRCS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 build/tests/test_parse$(EXE_EXT): tests/test_parse.c tests/unity.c $(SRCS)
+	@$(call MKDIR,build/tests)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+build/tests/test_url$(EXE_EXT): tests/test_url.c tests/unity.c $(SRCS)
 	@$(call MKDIR,build/tests)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 

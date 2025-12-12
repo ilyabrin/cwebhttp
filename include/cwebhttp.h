@@ -54,6 +54,19 @@ typedef struct
     size_t body_len;
 } cwh_response_t;
 
+// URL structure (zero-alloc: указатели в буфер)
+typedef struct
+{
+    char *scheme;      // "http" or "https"
+    char *host;        // "example.com" or "192.168.1.1"
+    char *port_str;    // "8080" or NULL (use default)
+    int port;          // 80, 443, or parsed custom port
+    char *path;        // "/api/users" or "/" (default)
+    char *query;       // "page=1&limit=10" or NULL
+    char *fragment;    // "section" or NULL (after #)
+    bool is_valid;
+} cwh_url_t;
+
 // Абстракция соединения (пока простой int fd)
 typedef struct cwh_conn
 {
@@ -85,6 +98,15 @@ cwh_error_t cwh_format_req(char *buf, size_t *out_len, const cwh_request_t *req)
 // Utility functions
 const char *cwh_get_header(const cwh_request_t *req, const char *key);
 const char *cwh_get_res_header(const cwh_response_t *res, const char *key);
+
+// URL parsing (zero-alloc)
+cwh_error_t cwh_parse_url(const char *url, size_t len, cwh_url_t *parsed);
+
+// High-level convenience API (one-liners for simple requests)
+cwh_error_t cwh_get(const char *url, cwh_response_t *res);
+cwh_error_t cwh_post(const char *url, const char *body, size_t body_len, cwh_response_t *res);
+cwh_error_t cwh_put(const char *url, const char *body, size_t body_len, cwh_response_t *res);
+cwh_error_t cwh_delete(const char *url, cwh_response_t *res);
 
 // Внутренние (не для юзера)
 struct cwh_server

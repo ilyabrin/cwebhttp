@@ -14,52 +14,337 @@
 #include <arpa/inet.h> // для Linux/macOS
 #include <unistd.h>    // close
 #include <strings.h>   // strncasecmp on Unix
+#include <fcntl.h>     // fcntl for non-blocking
 #endif
 
 // Definition of cwh_method_strs
 const char *cwh_method_strs[CWH_METHOD_NUM + 1] = {
     "GET", "POST", "PUT", "DELETE", NULL};
 
-// Dummy connect (реальный потом с getaddrinfo)
+// Platform-specific socket initialization
+#if defined(_WIN32) || defined(_WIN64)
+static int init_winsock(void)
+{
+    static int winsock_initialized = 0;
+    if (!winsock_initialized)
+    {
+        WSADATA wsa_data;
+        if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0)
+            return -1;
+        winsock_initialized = 1;
+    }
+    return 0;
+}
+
+#define CLOSE_SOCKET(fd) closesocket(fd)
+#define SOCKET_ERROR_CODE WSAGetLastError()
+#else
+#define CLOSE_SOCKET(fd) close(fd)
+#define SOCKET_ERROR_CODE errno
+#include <errno.h>
+#include <netdb.h>
+#endif
+
+// Set socket to non-blocking mode
+static int set_nonblocking(int fd)
+{
+#if defined(_WIN32) || defined(_WIN64)
+    u_long mode = 1;
+    return ioctlsocket(fd, FIONBIO, &mode);
+#else
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0)
+        return -1;
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+#endif
+}
+
+// Connect to host with timeout
 cwh_conn_t *cwh_connect(const char *url, int timeout_ms)
 {
-    (void)timeout_ms; // ignore for now
+    if (!url)
+        return NULL;
+
+#if defined(_WIN32) || defined(_WIN64)
+    if (init_winsock() != 0)
+        return NULL;
+#endif
+
+    // Parse URL
+    cwh_url_t parsed = {0};
+    if (cwh_parse_url(url, strlen(url), &parsed) != CWH_OK)
+        return NULL;
+
+    if (!parsed.is_valid || !parsed.host)
+        return NULL;
+
+    // Convert host and port to null-terminated strings
+    char host[256] = {0};
+    char port_str[16] = {0};
+
+    // Extract host (find length until ':' or end)
+    const char *host_end = parsed.host;
+    while (*host_end && *host_end != ':' && *host_end != '/' &&
+           *host_end != '?' && *host_end != '#')
+        host_end++;
+
+    size_t host_len = host_end - parsed.host;
+    if (host_len >= sizeof(host))
+        return NULL;
+
+    memcpy(host, parsed.host, host_len);
+    host[host_len] = '\0';
+
+    snprintf(port_str, sizeof(port_str), "%d", parsed.port);
+
+    // Resolve hostname using getaddrinfo
+    struct addrinfo hints = {0};
+    hints.ai_family = AF_UNSPEC;     // IPv4 or IPv6
+    hints.ai_socktype = SOCK_STREAM; // TCP
+    hints.ai_protocol = IPPROTO_TCP;
+
+    struct addrinfo *result = NULL;
+    if (getaddrinfo(host, port_str, &hints, &result) != 0)
+        return NULL;
+
+    // Try each address until we successfully connect
+    int sock = -1;
+    struct addrinfo *rp;
+    for (rp = result; rp != NULL; rp = rp->ai_next)
+    {
+        sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (sock < 0)
+            continue;
+
+        // Set non-blocking for timeout support
+        if (timeout_ms > 0)
+        {
+            if (set_nonblocking(sock) != 0)
+            {
+                CLOSE_SOCKET(sock);
+                sock = -1;
+                continue;
+            }
+        }
+
+        // Attempt connection
+        int conn_result = connect(sock, rp->ai_addr, (int)rp->ai_addrlen);
+
+        if (conn_result == 0)
+        {
+            // Connected immediately
+            break;
+        }
+
+#if defined(_WIN32) || defined(_WIN64)
+        int err = WSAGetLastError();
+        if (timeout_ms > 0 && err == WSAEWOULDBLOCK)
+#else
+        if (timeout_ms > 0 && (errno == EINPROGRESS || errno == EWOULDBLOCK))
+#endif
+        {
+            // Wait for connection with timeout
+            fd_set write_fds;
+            FD_ZERO(&write_fds);
+            FD_SET(sock, &write_fds);
+
+            struct timeval tv;
+            tv.tv_sec = timeout_ms / 1000;
+            tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+            int sel_result = select(sock + 1, NULL, &write_fds, NULL, &tv);
+
+            if (sel_result > 0)
+            {
+                // Check if connection succeeded
+                int sock_err = 0;
+                socklen_t len = sizeof(sock_err);
+                if (getsockopt(sock, SOL_SOCKET, SO_ERROR, (char *)&sock_err, &len) == 0 && sock_err == 0)
+                {
+                    break; // Connected successfully
+                }
+            }
+        }
+
+        CLOSE_SOCKET(sock);
+        sock = -1;
+    }
+
+    freeaddrinfo(result);
+
+    if (sock < 0)
+        return NULL;
+
+    // Create connection object
     cwh_conn_t *conn = malloc(sizeof(cwh_conn_t));
     if (!conn)
+    {
+        CLOSE_SOCKET(sock);
         return NULL;
-    conn->fd = -1; // dummy
-    conn->host = strdup(url ? url : "localhost");
-    conn->port = 80;
+    }
+
+    conn->fd = sock;
+    conn->host = strdup(host);
+    conn->port = parsed.port;
+
+    if (!conn->host)
+    {
+        CLOSE_SOCKET(sock);
+        free(conn);
+        return NULL;
+    }
+
     return conn;
+}
+
+// Send data with timeout
+static int send_with_timeout(int fd, const char *buf, size_t len, int timeout_ms)
+{
+    size_t sent = 0;
+
+    while (sent < len)
+    {
+        // Wait for socket to be writable
+        fd_set write_fds;
+        FD_ZERO(&write_fds);
+        FD_SET(fd, &write_fds);
+
+        struct timeval tv;
+        tv.tv_sec = timeout_ms / 1000;
+        tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+        int sel_result = select(fd + 1, NULL, &write_fds, NULL, &tv);
+
+        if (sel_result < 0)
+            return -1; // Error
+        if (sel_result == 0)
+            return -2; // Timeout
+
+        // Send data
+        int n = send(fd, buf + sent, (int)(len - sent), 0);
+        if (n < 0)
+        {
+#if defined(_WIN32) || defined(_WIN64)
+            int err = WSAGetLastError();
+            if (err == WSAEWOULDBLOCK)
+                continue;
+#else
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+                continue;
+#endif
+            return -1; // Error
+        }
+
+        sent += n;
+    }
+
+    return (int)sent;
+}
+
+// Receive data with timeout
+static int recv_with_timeout(int fd, char *buf, size_t len, int timeout_ms)
+{
+    // Wait for socket to be readable
+    fd_set read_fds;
+    FD_ZERO(&read_fds);
+    FD_SET(fd, &read_fds);
+
+    struct timeval tv;
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+    int sel_result = select(fd + 1, &read_fds, NULL, NULL, &tv);
+
+    if (sel_result < 0)
+        return -1; // Error
+    if (sel_result == 0)
+        return -2; // Timeout
+
+    // Receive data
+    int n = recv(fd, buf, (int)len, 0);
+    return n;
 }
 
 cwh_error_t cwh_send_req(cwh_conn_t *conn, cwh_method_t method, const char *path, const char **headers, const char *body, size_t body_len)
 {
-    (void)conn;
-    (void)method;
-    (void)path;
-    (void)headers;
-    (void)body;
-    (void)body_len;
-    if (conn->fd < 0)
+    if (!conn || conn->fd < 0 || !path)
         return CWH_ERR_NET;
-    return CWH_OK; // dummy
+
+    // Build request
+    char req_buf[8192] = {0};
+    size_t offset = 0;
+
+    // Request line
+    const char *method_str = cwh_method_strs[method];
+    offset += snprintf(req_buf + offset, sizeof(req_buf) - offset,
+                       "%s %s HTTP/1.1\r\n", method_str, path);
+
+    // Host header (required for HTTP/1.1)
+    offset += snprintf(req_buf + offset, sizeof(req_buf) - offset,
+                       "Host: %s\r\n", conn->host);
+
+    // Additional headers
+    if (headers)
+    {
+        for (int i = 0; headers[i] != NULL && headers[i + 1] != NULL; i += 2)
+        {
+            offset += snprintf(req_buf + offset, sizeof(req_buf) - offset,
+                               "%s: %s\r\n", headers[i], headers[i + 1]);
+        }
+    }
+
+    // Content-Length if body present
+    if (body && body_len > 0)
+    {
+        offset += snprintf(req_buf + offset, sizeof(req_buf) - offset,
+                           "Content-Length: %llu\r\n", (unsigned long long)body_len);
+    }
+
+    // End of headers
+    offset += snprintf(req_buf + offset, sizeof(req_buf) - offset, "\r\n");
+
+    // Send headers
+    if (send_with_timeout(conn->fd, req_buf, offset, 5000) < 0)
+        return CWH_ERR_TIMEOUT;
+
+    // Send body if present
+    if (body && body_len > 0)
+    {
+        if (send_with_timeout(conn->fd, body, body_len, 5000) < 0)
+            return CWH_ERR_TIMEOUT;
+    }
+
+    return CWH_OK;
 }
 
 cwh_error_t cwh_read_res(cwh_conn_t *conn, cwh_response_t *res)
 {
-    (void)conn;
-    (void)res;
-    res->status = 200;
-    res->body = "Dummy response";
-    res->body_len = strlen(res->body);
-    return CWH_OK;
+    if (!conn || conn->fd < 0 || !res)
+        return CWH_ERR_NET;
+
+    // Receive response (simplified - just read what's available)
+    static char recv_buf[16384];
+    int n = recv_with_timeout(conn->fd, recv_buf, sizeof(recv_buf) - 1, 5000);
+
+    if (n < 0)
+        return CWH_ERR_TIMEOUT;
+    if (n == 0)
+        return CWH_ERR_NET; // Connection closed
+
+    recv_buf[n] = '\0';
+
+    // Parse response
+    return cwh_parse_res(recv_buf, n, res);
 }
 
 void cwh_close(cwh_conn_t *conn)
 {
     if (conn)
     {
+        if (conn->fd >= 0)
+        {
+            CLOSE_SOCKET(conn->fd);
+        }
         free(conn->host);
         free(conn);
     }
@@ -488,6 +773,151 @@ const char *cwh_get_res_header(const cwh_response_t *res, const char *key)
     return NULL;
 }
 
+// ============================================================================
+// URL Parser (zero-alloc)
+// ============================================================================
+
+// Parse port string to integer
+static int parse_port_str(const char *port_str, size_t len)
+{
+    if (!port_str || len == 0 || len > 5)
+        return -1;
+
+    int port = 0;
+    for (size_t i = 0; i < len; i++)
+    {
+        if (port_str[i] < '0' || port_str[i] > '9')
+            return -1;
+        port = port * 10 + (port_str[i] - '0');
+        if (port > 65535)
+            return -1;
+    }
+
+    return port > 0 ? port : -1;
+}
+
+// URL parser: scheme://host:port/path?query#fragment
+// All pointers reference the original buffer (zero-alloc)
+cwh_error_t cwh_parse_url(const char *url, size_t len, cwh_url_t *parsed)
+{
+    if (!url || !parsed || len == 0)
+        return CWH_ERR_PARSE;
+
+    memset(parsed, 0, sizeof(*parsed));
+
+    const char *p = url;
+    const char *end = url + len;
+
+    // 1. Parse scheme (http:// or https://)
+    const char *scheme_end = find_char(p, end, ':');
+    if (scheme_end + 2 >= end || scheme_end[1] != '/' || scheme_end[2] != '/')
+        return CWH_ERR_PARSE;
+
+    size_t scheme_len = scheme_end - p;
+    if (scheme_len == 4 && memcmp(p, "http", 4) == 0)
+    {
+        parsed->scheme = (char *)p;
+        parsed->port = 80; // default HTTP port
+    }
+    else if (scheme_len == 5 && memcmp(p, "https", 5) == 0)
+    {
+        parsed->scheme = (char *)p;
+        parsed->port = 443; // default HTTPS port
+    }
+    else
+    {
+        return CWH_ERR_PARSE; // unsupported scheme
+    }
+
+    p = scheme_end + 3; // skip "://"
+
+    // 2. Parse host and optional port
+    // Find end of host:port section (before /, ?, or #)
+    const char *host_start = p;
+    const char *host_end = p;
+
+    while (host_end < end)
+    {
+        char c = *host_end;
+        if (c == '/' || c == '?' || c == '#')
+            break;
+        host_end++;
+    }
+
+    // Check for port separator
+    const char *port_sep = find_char(host_start, host_end, ':');
+
+    if (port_sep < host_end)
+    {
+        // Has explicit port
+        parsed->host = (char *)host_start;
+        parsed->port_str = (char *)(port_sep + 1);
+
+        // Parse port number
+        size_t port_len = host_end - (port_sep + 1);
+        int port = parse_port_str(port_sep + 1, port_len);
+        if (port < 0)
+            return CWH_ERR_PARSE;
+
+        parsed->port = port;
+    }
+    else
+    {
+        // No explicit port, use default
+        parsed->host = (char *)host_start;
+        parsed->port_str = NULL;
+    }
+
+    // 3. Parse path, query, fragment
+    p = host_end;
+
+    if (p >= end)
+    {
+        // No path, use default "/"
+        parsed->path = NULL; // Will be interpreted as "/"
+        parsed->is_valid = true;
+        return CWH_OK;
+    }
+
+    // Parse path
+    if (*p == '/')
+    {
+        const char *path_start = p;
+        const char *path_end = find_char(p, end, '?');
+
+        if (path_end >= end)
+            path_end = find_char(p, end, '#');
+
+        if (path_end >= end)
+            path_end = end;
+
+        parsed->path = (char *)path_start;
+        p = path_end;
+    }
+
+    // Parse query
+    if (p < end && *p == '?')
+    {
+        const char *query_start = p + 1;
+        const char *query_end = find_char(query_start, end, '#');
+
+        if (query_end >= end)
+            query_end = end;
+
+        parsed->query = (char *)query_start;
+        p = query_end;
+    }
+
+    // Parse fragment
+    if (p < end && *p == '#')
+    {
+        parsed->fragment = (char *)(p + 1);
+    }
+
+    parsed->is_valid = true;
+    return CWH_OK;
+}
+
 // Сервер dummy
 cwh_server_t *cwh_listen(const char *addr_port, int backlog)
 {
@@ -524,4 +954,87 @@ cwh_error_t cwh_run(cwh_server_t *srv)
 void cwh_free_server(cwh_server_t *srv)
 {
     free(srv);
+}
+
+// ============================================================================
+// High-level convenience API
+// ============================================================================
+
+// Internal helper for high-level requests
+static cwh_error_t cwh_request_simple(const char *url, cwh_method_t method,
+                                      const char *body, size_t body_len,
+                                      cwh_response_t *res)
+{
+    if (!url || !res)
+        return CWH_ERR_PARSE;
+
+    // Parse URL to extract path
+    cwh_url_t parsed = {0};
+    if (cwh_parse_url(url, strlen(url), &parsed) != CWH_OK)
+        return CWH_ERR_PARSE;
+
+    // Connect
+    cwh_conn_t *conn = cwh_connect(url, 5000);
+    if (!conn)
+        return CWH_ERR_NET;
+
+    // Extract path (or use "/" as default)
+    const char *path = "/";
+    if (parsed.path)
+    {
+        // Find path length
+        const char *path_end = parsed.path;
+        while (*path_end && *path_end != '?' && *path_end != '#')
+            path_end++;
+
+        // Create null-terminated path string
+        static char path_buf[2048];
+        size_t path_len = path_end - parsed.path;
+        if (path_len >= sizeof(path_buf))
+            path_len = sizeof(path_buf) - 1;
+
+        memcpy(path_buf, parsed.path, path_len);
+        path_buf[path_len] = '\0';
+        path = path_buf;
+    }
+
+    // Send request
+    cwh_error_t err = cwh_send_req(conn, method, path, NULL, body, body_len);
+    if (err != CWH_OK)
+    {
+        cwh_close(conn);
+        return err;
+    }
+
+    // Read response
+    err = cwh_read_res(conn, res);
+
+    // Close connection
+    cwh_close(conn);
+
+    return err;
+}
+
+// One-liner GET request
+cwh_error_t cwh_get(const char *url, cwh_response_t *res)
+{
+    return cwh_request_simple(url, CWH_METHOD_GET, NULL, 0, res);
+}
+
+// One-liner POST request
+cwh_error_t cwh_post(const char *url, const char *body, size_t body_len, cwh_response_t *res)
+{
+    return cwh_request_simple(url, CWH_METHOD_POST, body, body_len, res);
+}
+
+// One-liner PUT request
+cwh_error_t cwh_put(const char *url, const char *body, size_t body_len, cwh_response_t *res)
+{
+    return cwh_request_simple(url, CWH_METHOD_PUT, body, body_len, res);
+}
+
+// One-liner DELETE request
+cwh_error_t cwh_delete(const char *url, cwh_response_t *res)
+{
+    return cwh_request_simple(url, CWH_METHOD_DELETE, NULL, 0, res);
 }
