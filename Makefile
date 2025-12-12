@@ -3,29 +3,20 @@ CFLAGS = -Wall -Wextra -std=c11 -O2 -Iinclude -Itests
 SRCS = src/cwebhttp.c
 
 # OS detection
-UNAME_S := $(shell uname -s 2>/dev/null || echo Windows)
-ifeq ($(UNAME_S),Windows)
+ifeq ($(OS),Windows_NT)
+	# Windows
 	CFLAGS += -D_WIN32
 	LDFLAGS = -lws2_32
-	MKDIR = mkdir -p $(1)
-	RM = rm -rf
-	EXE_EXT = .exe
-else ifeq ($(OS),Windows_NT)
-	CFLAGS += -D_WIN32
-	LDFLAGS = -lws2_32
-	MKDIR = mkdir -p $(1)
-	RM = rm -rf
+	MKDIR = if not exist $(subst /,\,$(1)) mkdir $(subst /,\,$(1))
+	RM = if exist build rmdir /s /q build
 	EXE_EXT = .exe
 else
-	ifeq ($(UNAME_S),Linux)
-		LDFLAGS =
-	endif
-	ifeq ($(UNAME_S),Darwin)
-		LDFLAGS =
-	endif
+	# Unix-like (Linux, macOS, etc.)
+	UNAME_S := $(shell uname -s)
+	LDFLAGS = 
 	MKDIR = mkdir -p $(1)
-	RM = rm -rf
-	EXE_EXT =
+	RM = rm -rf build
+	EXE_EXT = 
 endif
 
 all: examples build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT)
@@ -55,6 +46,6 @@ build/tests/test_url$(EXE_EXT): tests/test_url.c tests/unity.c $(SRCS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 clean:
-	$(RM) build
+	@$(RM)
 
 .PHONY: all examples test tests clean

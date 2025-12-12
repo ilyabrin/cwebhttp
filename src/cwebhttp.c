@@ -6,7 +6,6 @@
 #if defined(_WIN32) || defined(_WIN64)
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#pragma comment(lib, "ws2_32.lib")
 #define strncasecmp _strnicmp
 #else
 #include <sys/socket.h>
@@ -921,6 +920,7 @@ cwh_error_t cwh_parse_url(const char *url, size_t len, cwh_url_t *parsed)
 // Сервер dummy
 cwh_server_t *cwh_listen(const char *addr_port, int backlog)
 {
+    (void)addr_port;
     (void)backlog;
     cwh_server_t *srv = malloc(sizeof(cwh_server_t));
     if (!srv)
