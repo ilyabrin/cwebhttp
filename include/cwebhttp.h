@@ -78,7 +78,13 @@ void cwh_free_server(cwh_server_t *srv);
 
 // Парсинг (zero-alloc)
 cwh_error_t cwh_parse_req(const char *buf, size_t len, cwh_request_t *req);
+cwh_error_t cwh_parse_res(const char *buf, size_t len, cwh_response_t *res);
 cwh_error_t cwh_format_res(char *buf, size_t *out_len, const cwh_response_t *res);
+cwh_error_t cwh_format_req(char *buf, size_t *out_len, const cwh_request_t *req);
+
+// Utility functions
+const char *cwh_get_header(const cwh_request_t *req, const char *key);
+const char *cwh_get_res_header(const cwh_response_t *res, const char *key);
 
 // Внутренние (не для юзера)
 struct cwh_server
