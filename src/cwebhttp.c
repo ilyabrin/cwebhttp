@@ -15,6 +15,8 @@
 #include <unistd.h>    // close
 #include <strings.h>   // strncasecmp on Unix
 #include <fcntl.h>     // fcntl for non-blocking
+#include <netdb.h>     // getaddrinfo
+#include <errno.h>     // errno
 #endif
 
 // Definition of cwh_method_strs
@@ -41,8 +43,6 @@ static int init_winsock(void)
 #else
 #define CLOSE_SOCKET(fd) close(fd)
 #define SOCKET_ERROR_CODE errno
-#include <errno.h>
-#include <netdb.h>
 #endif
 
 // Set socket to non-blocking mode
