@@ -559,6 +559,28 @@ cwh_error_t cwh_parse_req(const char *buf, size_t len, cwh_request_t *req)
         req->body_len = end - p;
     }
 
+    // Null-terminate strings for easier use (modify buffer)
+    // This is safe to do after parsing is complete
+    if (req->method_str)
+    {
+        // Find end of method (space after method)
+        char *method_end = req->method_str;
+        while (*method_end && *method_end != ' ')
+            method_end++;
+        if (*method_end == ' ')
+            *method_end = '\0';
+    }
+
+    if (req->path)
+    {
+        // Find end of path (space, '?', or '\r')
+        char *path_end = req->path;
+        while (*path_end && *path_end != ' ' && *path_end != '?' && *path_end != '\r')
+            path_end++;
+        if (*path_end == ' ' || *path_end == '?' || *path_end == '\r')
+            *path_end = '\0';
+    }
+
     req->is_valid = true;
     return CWH_OK;
 }
@@ -1069,43 +1091,280 @@ cwh_error_t cwh_encode_chunked(const char *body, size_t body_len,
     return CWH_OK;
 }
 
-// Сервер dummy
+// ============================================================================
+// HTTP/1.1 Server Implementation
+// ============================================================================
+
+// Create and bind server socket
 cwh_server_t *cwh_listen(const char *addr_port, int backlog)
 {
-    (void)addr_port;
-    (void)backlog;
+    if (!addr_port)
+        return NULL;
+
+#if defined(_WIN32) || defined(_WIN64)
+    if (init_winsock() != 0)
+        return NULL;
+#endif
+
+    // Parse addr:port (simple format: "8080" or "localhost:8080")
+    char host[256] = "0.0.0.0"; // Default: bind to all interfaces
+    int port = 8080;             // Default port
+
+    // Try to parse port from addr_port
+    const char *colon = strchr(addr_port, ':');
+    if (colon)
+    {
+        // Has host:port format
+        size_t host_len = colon - addr_port;
+        if (host_len < sizeof(host))
+        {
+            memcpy(host, addr_port, host_len);
+            host[host_len] = '\0';
+        }
+        port = atoi(colon + 1);
+    }
+    else
+    {
+        // Just port number
+        port = atoi(addr_port);
+    }
+
+    // Create socket
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0)
+        return NULL;
+
+    // Set SO_REUSEADDR to allow quick restart
+    int opt = 1;
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char *)&opt, sizeof(opt));
+
+    // Bind to address and port
+    struct sockaddr_in addr = {0};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((uint16_t)port);
+    addr.sin_addr.s_addr = INADDR_ANY; // Bind to all interfaces
+
+    if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+    {
+        CLOSE_SOCKET(sock);
+        return NULL;
+    }
+
+    // Listen for connections
+    if (listen(sock, backlog) < 0)
+    {
+        CLOSE_SOCKET(sock);
+        return NULL;
+    }
+
+    // Allocate server structure
     cwh_server_t *srv = malloc(sizeof(cwh_server_t));
     if (!srv)
+    {
+        CLOSE_SOCKET(sock);
         return NULL;
-    srv->sock = -1; // dummy bind
+    }
+
+    srv->sock = sock;
+    srv->routes = NULL;
+
     return srv;
 }
 
-cwh_error_t cwh_route(cwh_server_t *srv, const char *method, const char *pattern, cwh_handler_t handler, void *user_data)
+// Add route to server
+cwh_error_t cwh_route(cwh_server_t *srv, const char *method, const char *pattern,
+                       cwh_handler_t handler, void *user_data)
 {
-    (void)srv;
-    (void)method;
-    (void)pattern;
-    (void)handler;
-    (void)user_data;
+    if (!srv || !pattern || !handler)
+        return CWH_ERR_PARSE;
+
+    // Allocate route
+    cwh_route_t *route = malloc(sizeof(cwh_route_t));
+    if (!route)
+        return CWH_ERR_ALLOC;
+
+    // Copy method (can be NULL for any method)
+    route->method = method ? strdup(method) : NULL;
+    route->pattern = strdup(pattern);
+    route->handler = handler;
+    route->user_data = user_data;
+    route->next = NULL;
+
+    // Add to linked list (at end for predictable ordering)
+    if (!srv->routes)
+    {
+        srv->routes = route;
+    }
+    else
+    {
+        cwh_route_t *r = srv->routes;
+        while (r->next)
+            r = r->next;
+        r->next = route;
+    }
+
     return CWH_OK;
 }
 
+// Find matching route for request
+static cwh_route_t *find_route(cwh_server_t *srv, cwh_request_t *req)
+{
+    for (cwh_route_t *r = srv->routes; r; r = r->next)
+    {
+        // Check method match (NULL method = any method)
+        if (r->method && strncasecmp(r->method, req->method_str, strlen(r->method)) != 0)
+            continue;
+
+        // Check pattern match (simple exact match for now)
+        if (strcmp(r->pattern, req->path) == 0)
+            return r;
+    }
+    return NULL;
+}
+
+// Run server event loop (blocking)
 cwh_error_t cwh_run(cwh_server_t *srv)
 {
-    (void)srv;
-    printf("Dummy server running...\n");
-#if defined(_WIN32) || defined(_WIN64)
-    Sleep(5000); // Windows Sleep takes milliseconds
-#else
-    sleep(5); // Unix sleep takes seconds
-#endif
+    if (!srv || srv->sock < 0)
+        return CWH_ERR_NET;
+
+    printf("Server listening on socket %d...\n", srv->sock);
+
+    while (1)
+    {
+        // Accept connection
+        struct sockaddr_in client_addr = {0};
+        socklen_t client_len = sizeof(client_addr);
+        int client_sock = accept(srv->sock, (struct sockaddr *)&client_addr, &client_len);
+
+        if (client_sock < 0)
+        {
+            // Accept failed (could be interrupt or shutdown)
+            continue;
+        }
+
+        // Read request
+        char req_buf[8192] = {0};
+        int n = recv(client_sock, req_buf, sizeof(req_buf) - 1, 0);
+        if (n <= 0)
+        {
+            CLOSE_SOCKET(client_sock);
+            continue;
+        }
+        req_buf[n] = '\0';
+
+        // Parse request
+        cwh_request_t req = {0};
+        if (cwh_parse_req(req_buf, n, &req) != CWH_OK || !req.is_valid)
+        {
+            // Send 400 Bad Request
+            const char *bad_req = "HTTP/1.1 400 Bad Request\r\nContent-Length: 11\r\n\r\nBad Request";
+            send(client_sock, bad_req, strlen(bad_req), 0);
+            CLOSE_SOCKET(client_sock);
+            continue;
+        }
+
+        // Log request
+        printf("%s %s\n", req.method_str, req.path);
+        fflush(stdout);
+
+        // Create connection object for handler
+        cwh_conn_t conn = {0};
+        conn.fd = client_sock;
+        conn.host = "client"; // Could parse from client_addr
+        conn.port = 0;
+
+        // Find and call handler
+        cwh_route_t *route = find_route(srv, &req);
+        if (route)
+        {
+            // Call handler
+            route->handler(&req, &conn, route->user_data);
+        }
+        else
+        {
+            // 404 Not Found
+            const char *not_found = "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found";
+            send(client_sock, not_found, strlen(not_found), 0);
+        }
+
+        // Close connection
+        CLOSE_SOCKET(client_sock);
+    }
+
     return CWH_OK;
 }
 
+// Free server and all routes
 void cwh_free_server(cwh_server_t *srv)
 {
+    if (!srv)
+        return;
+
+    // Close socket
+    if (srv->sock >= 0)
+        CLOSE_SOCKET(srv->sock);
+
+    // Free all routes
+    cwh_route_t *r = srv->routes;
+    while (r)
+    {
+        cwh_route_t *next = r->next;
+        free(r->method);
+        free(r->pattern);
+        free(r);
+        r = next;
+    }
+
     free(srv);
+}
+
+// Server response helpers
+cwh_error_t cwh_send_response(cwh_conn_t *conn, int status, const char *content_type,
+                                const char *body, size_t body_len)
+{
+    if (!conn || conn->fd < 0)
+        return CWH_ERR_NET;
+
+    // Build response
+    char resp_buf[16384];
+    size_t offset = 0;
+
+    // Status line
+    offset += snprintf(resp_buf + offset, sizeof(resp_buf) - offset,
+                       "HTTP/1.1 %d OK\r\n", status);
+
+    // Headers
+    if (content_type)
+    {
+        offset += snprintf(resp_buf + offset, sizeof(resp_buf) - offset,
+                           "Content-Type: %s\r\n", content_type);
+    }
+
+    offset += snprintf(resp_buf + offset, sizeof(resp_buf) - offset,
+                       "Content-Length: %lu\r\n", (unsigned long)body_len);
+
+    offset += snprintf(resp_buf + offset, sizeof(resp_buf) - offset, "\r\n");
+
+    // Body
+    if (body && body_len > 0)
+    {
+        memcpy(resp_buf + offset, body, body_len);
+        offset += body_len;
+    }
+
+    // Send
+    send(conn->fd, resp_buf, offset, 0);
+
+    return CWH_OK;
+}
+
+cwh_error_t cwh_send_status(cwh_conn_t *conn, int status, const char *message)
+{
+    if (!message)
+        message = "OK";
+
+    return cwh_send_response(conn, status, "text/plain", message, strlen(message));
 }
 
 // ============================================================================

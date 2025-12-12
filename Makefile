@@ -23,7 +23,7 @@ endif
 
 all: examples build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT) build/tests/test_chunked$(EXE_EXT)
 
-examples: build/examples/minimal_server$(EXE_EXT) build/examples/simple_client$(EXE_EXT)
+examples: build/examples/minimal_server$(EXE_EXT) build/examples/simple_client$(EXE_EXT) build/examples/hello_server$(EXE_EXT)
 
 test: build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT) build/tests/test_chunked$(EXE_EXT)
 	$(call RUN_TEST,test_parse)
@@ -37,6 +37,10 @@ build/examples/minimal_server$(EXE_EXT): examples/minimal_server.c $(SRCS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 build/examples/simple_client$(EXE_EXT): examples/simple_client.c $(SRCS)
+	@$(call MKDIR,build/examples)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+build/examples/hello_server$(EXE_EXT): examples/hello_server.c $(SRCS)
 	@$(call MKDIR,build/examples)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 

@@ -82,12 +82,17 @@ cwh_error_t cwh_read_res(cwh_conn_t *conn, cwh_response_t *res);
 void cwh_close(cwh_conn_t *conn);
 
 // Сервер API (пока sync, async потом)
-typedef void (*cwh_handler_t)(cwh_conn_t *conn, cwh_request_t *req, void *user_data);
+typedef cwh_error_t (*cwh_handler_t)(cwh_request_t *req, cwh_conn_t *conn, void *user_data);
 typedef struct cwh_server cwh_server_t;
 cwh_server_t *cwh_listen(const char *addr_port, int backlog);
 cwh_error_t cwh_route(cwh_server_t *srv, const char *method, const char *pattern, cwh_handler_t handler, void *user_data);
 cwh_error_t cwh_run(cwh_server_t *srv); // blocking event loop
 void cwh_free_server(cwh_server_t *srv);
+
+// Server response helpers
+cwh_error_t cwh_send_response(cwh_conn_t *conn, int status, const char *content_type,
+                               const char *body, size_t body_len);
+cwh_error_t cwh_send_status(cwh_conn_t *conn, int status, const char *message);
 
 // Парсинг (zero-alloc)
 cwh_error_t cwh_parse_req(const char *buf, size_t len, cwh_request_t *req);
@@ -112,11 +117,21 @@ cwh_error_t cwh_post(const char *url, const char *body, size_t body_len, cwh_res
 cwh_error_t cwh_put(const char *url, const char *body, size_t body_len, cwh_response_t *res);
 cwh_error_t cwh_delete(const char *url, cwh_response_t *res);
 
+// Route entry (internal)
+typedef struct cwh_route
+{
+    char *method;                // "GET", "POST", etc. (NULL = any method)
+    char *pattern;               // "/api/users", "/", etc.
+    cwh_handler_t handler;       // Request handler function
+    void *user_data;             // User data passed to handler
+    struct cwh_route *next;      // Linked list
+} cwh_route_t;
+
 // Внутренние (не для юзера)
 struct cwh_server
 {
-    int sock;
-    // routes и т.д. потом
+    int sock;                    // Server socket
+    cwh_route_t *routes;         // Linked list of routes
 };
 
 #endif // CWEBHTTP_H
