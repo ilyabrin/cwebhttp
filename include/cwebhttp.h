@@ -1,0 +1,91 @@
+#ifndef CWEBHTTP_H
+#define CWEBHTTP_H
+
+#include <stddef.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <stdlib.h> // для malloc/free в примерах, но zero-alloc в core
+
+// Версия
+#define CWEBHTTP_VERSION "0.1.0"
+
+// Ошибки
+typedef enum
+{
+    CWH_OK = 0,
+    CWH_ERR_PARSE = -1,
+    CWH_ERR_NET = -2,
+    CWH_ERR_ALLOC = -3,
+    CWH_ERR_TIMEOUT = -4
+} cwh_error_t;
+
+// HTTP-методы (строки для простоты)
+typedef enum
+{
+    CWH_METHOD_GET,
+    CWH_METHOD_POST,
+    CWH_METHOD_PUT,
+    CWH_METHOD_DELETE,
+    CWH_METHOD_NUM // для массива
+} cwh_method_t;
+
+const char *cwh_method_strs[CWH_METHOD_NUM + 1] = {
+    "GET", "POST", "PUT", "DELETE", NULL};
+
+// Структура запроса (zero-alloc: указатели в буфер)
+typedef struct
+{
+    char *method_str; // "GET" и т.д.
+    char *path;
+    char *query;       // "?key=val"
+    char *headers[32]; // key-value пары, NULL-terminated (headers[i*2] = key, [i*2+1] = val)
+    size_t num_headers;
+    char *body;
+    size_t body_len;
+    bool is_valid;
+} cwh_request_t;
+
+// Структура ответа
+typedef struct
+{
+    int status;        // 200, 404 и т.д.
+    char *headers[32]; // как в req
+    size_t num_headers;
+    char *body;
+    size_t body_len;
+} cwh_response_t;
+
+// Абстракция соединения (пока простой int fd)
+typedef struct cwh_conn
+{
+    int fd;
+    char *host;
+    int port;
+} cwh_conn_t;
+
+// Клиент API
+cwh_conn_t *cwh_connect(const char *url, int timeout_ms);
+cwh_error_t cwh_send_req(cwh_conn_t *conn, cwh_method_t method, const char *path, const char **headers, const char *body, size_t body_len);
+cwh_error_t cwh_read_res(cwh_conn_t *conn, cwh_response_t *res);
+void cwh_close(cwh_conn_t *conn);
+
+// Сервер API (пока sync, async потом)
+typedef void (*cwh_handler_t)(cwh_conn_t *conn, cwh_request_t *req, void *user_data);
+typedef struct cwh_server cwh_server_t;
+cwh_server_t *cwh_listen(const char *addr_port, int backlog);
+cwh_error_t cwh_route(cwh_server_t *srv, const char *method, const char *pattern, cwh_handler_t handler, void *user_data);
+cwh_error_t cwh_run(cwh_server_t *srv); // blocking event loop
+void cwh_free_server(cwh_server_t *srv);
+
+// Парсинг (zero-alloc)
+cwh_error_t cwh_parse_req(const char *buf, size_t len, cwh_request_t *req);
+cwh_error_t cwh_format_res(char *buf, size_t *out_len, const cwh_response_t *res);
+
+// Внутренние (не для юзера)
+struct cwh_server
+{
+    int sock;
+    // routes и т.д. потом
+};
+
+#endif // CWEBHTTP_H
