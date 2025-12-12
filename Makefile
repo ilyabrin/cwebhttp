@@ -10,6 +10,7 @@ ifeq ($(OS),Windows_NT)
 	MKDIR = if not exist $(subst /,\,$(1)) mkdir $(subst /,\,$(1))
 	RM = if exist build rmdir /s /q build
 	EXE_EXT = .exe
+	RUN_TEST = .\build\tests\$(1).exe
 else
 	# Unix-like (Linux, macOS, etc.)
 	UNAME_S := $(shell uname -s)
@@ -17,6 +18,7 @@ else
 	MKDIR = mkdir -p $(1)
 	RM = rm -rf build
 	EXE_EXT = 
+	RUN_TEST = ./build/tests/$(1)
 endif
 
 all: examples build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT)
@@ -24,8 +26,8 @@ all: examples build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT)
 examples: build/examples/minimal_server$(EXE_EXT) build/examples/simple_client$(EXE_EXT)
 
 test: build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT)
-	./build/tests/test_parse$(EXE_EXT)
-	./build/tests/test_url$(EXE_EXT)
+	$(call RUN_TEST,test_parse)
+	$(call RUN_TEST,test_url)
 
 tests: test
 
