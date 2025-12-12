@@ -48,4 +48,14 @@ build/tests/test_url$(EXE_EXT): tests/test_url.c tests/unity.c $(SRCS)
 clean:
 	@$(RM)
 
-.PHONY: all examples test tests clean
+# Docker targets
+docker-build:
+	docker build -t cwebhttp-test .
+
+docker-test: docker-build
+	docker run --rm cwebhttp-test
+
+docker-shell: docker-build
+	docker run --rm -it cwebhttp-test /bin/bash
+
+.PHONY: all examples test tests clean docker-build docker-test docker-shell

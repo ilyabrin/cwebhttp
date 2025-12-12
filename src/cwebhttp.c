@@ -1,3 +1,8 @@
+#if !defined(_WIN32) && !defined(_WIN64)
+#define _GNU_SOURCE
+#define _POSIX_C_SOURCE 200112L
+#endif
+
 #include "cwebhttp.h"
 #include <stdio.h>
 #include <string.h>
@@ -9,7 +14,6 @@
 #include <ws2tcpip.h>
 #define strncasecmp _strnicmp
 #else
-#define _GNU_SOURCE
 #include <sys/socket.h>
 #include <sys/select.h>
 #include <sys/time.h>
