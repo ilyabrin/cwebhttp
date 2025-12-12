@@ -2,20 +2,24 @@
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdlib.h>
 
 #if defined(_WIN32) || defined(_WIN64)
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #define strncasecmp _strnicmp
 #else
+#define _GNU_SOURCE
 #include <sys/socket.h>
+#include <sys/select.h>
+#include <sys/time.h>
 #include <netinet/in.h>
-#include <arpa/inet.h> // для Linux/macOS
-#include <unistd.h>    // close
-#include <strings.h>   // strncasecmp on Unix
-#include <fcntl.h>     // fcntl for non-blocking
-#include <netdb.h>     // getaddrinfo
-#include <errno.h>     // errno
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <strings.h>
+#include <fcntl.h>
+#include <netdb.h>
+#include <errno.h>
 #endif
 
 // Definition of cwh_method_strs
