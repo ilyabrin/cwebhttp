@@ -97,6 +97,7 @@ cwh_error_t cwh_send_status(cwh_conn_t *conn, int status, const char *message);
 // Static file serving
 const char *cwh_get_mime_type(const char *path);
 cwh_error_t cwh_send_file(cwh_conn_t *conn, const char *file_path);
+cwh_error_t cwh_send_file_range(cwh_conn_t *conn, const char *file_path, const char *range_header);
 cwh_error_t cwh_serve_static(cwh_request_t *req, cwh_conn_t *conn, void *root_dir);
 
 // Парсинг (zero-alloc)

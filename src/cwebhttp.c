@@ -1490,6 +1490,174 @@ cwh_error_t cwh_send_file(cwh_conn_t *conn, const char *file_path)
     return err;
 }
 
+// Parse Range header (supports "bytes=start-end" format)
+// Returns 1 if range parsed successfully, 0 if no range or invalid
+static int parse_range_header(const char *range_header, size_t file_size,
+                               size_t *out_start, size_t *out_end)
+{
+    if (!range_header || !out_start || !out_end)
+        return 0;
+
+    // Check for "bytes=" prefix
+    if (strncmp(range_header, "bytes=", 6) != 0)
+        return 0;
+
+    const char *range_spec = range_header + 6;
+
+    // Parse start-end format
+    long long start = -1, end = -1;
+
+    // Handle different range formats:
+    // "bytes=100-200" - from byte 100 to 200
+    // "bytes=100-" - from byte 100 to end
+    // "bytes=-200" - last 200 bytes
+
+    if (range_spec[0] == '-')
+    {
+        // Suffix range: last N bytes
+        end = file_size - 1;
+        start = file_size - atoll(range_spec + 1);
+        if (start < 0)
+            start = 0;
+    }
+    else
+    {
+        // Parse start
+        char *dash = strchr(range_spec, '-');
+        if (!dash)
+            return 0;
+
+        start = atoll(range_spec);
+
+        // Parse end (if present)
+        if (*(dash + 1) == '\0' || *(dash + 1) == ' ' || *(dash + 1) == '\r' || *(dash + 1) == '\n')
+        {
+            // Open-ended range (e.g., "50-")
+            end = file_size - 1;
+        }
+        else
+        {
+            end = atoll(dash + 1);
+        }
+    }
+
+    // Validate range
+    if (start < 0 || start >= (long long)file_size || end < start)
+        return 0;
+
+    if (end >= (long long)file_size)
+        end = file_size - 1;
+
+    *out_start = (size_t)start;
+    *out_end = (size_t)end;
+
+    return 1;
+}
+
+// Send file with Range request support (HTTP 206 Partial Content)
+cwh_error_t cwh_send_file_range(cwh_conn_t *conn, const char *file_path,
+                                 const char *range_header)
+{
+    if (!conn || !file_path)
+        return CWH_ERR_PARSE;
+
+    FILE *fp = fopen(file_path, "rb");
+    if (!fp)
+        return cwh_send_status(conn, 404, "File Not Found");
+
+    // Get file size
+    fseek(fp, 0, SEEK_END);
+    long file_size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+
+    if (file_size < 0 || file_size > 10 * 1024 * 1024) // Max 10MB
+    {
+        fclose(fp);
+        return cwh_send_status(conn, 413, "File Too Large");
+    }
+
+    // Parse range if present
+    size_t range_start = 0, range_end = (size_t)file_size - 1;
+    int is_range_request = 0;
+
+    if (range_header)
+    {
+        is_range_request = parse_range_header(range_header, (size_t)file_size,
+                                               &range_start, &range_end);
+    }
+
+    // Calculate content length
+    size_t content_length = is_range_request ? (range_end - range_start + 1) : (size_t)file_size;
+
+    // Allocate buffer for content
+    char *file_data = (char *)malloc(content_length);
+    if (!file_data)
+    {
+        fclose(fp);
+        return CWH_ERR_ALLOC;
+    }
+
+    // Seek to start position and read
+    if (is_range_request)
+    {
+        fseek(fp, (long)range_start, SEEK_SET);
+    }
+
+    size_t bytes_read = fread(file_data, 1, content_length, fp);
+    fclose(fp);
+
+    if (bytes_read != content_length)
+    {
+        free(file_data);
+        return cwh_send_status(conn, 500, "File Read Error");
+    }
+
+    // Build response
+    char resp_buf[16384];
+    size_t offset = 0;
+
+    // Status line
+    if (is_range_request)
+    {
+        offset += snprintf(resp_buf + offset, sizeof(resp_buf) - offset,
+                          "HTTP/1.1 206 Partial Content\r\n");
+    }
+    else
+    {
+        offset += snprintf(resp_buf + offset, sizeof(resp_buf) - offset,
+                          "HTTP/1.1 200 OK\r\n");
+    }
+
+    // Headers
+    const char *mime_type = cwh_get_mime_type(file_path);
+    offset += snprintf(resp_buf + offset, sizeof(resp_buf) - offset,
+                      "Content-Type: %s\r\n", mime_type);
+
+    offset += snprintf(resp_buf + offset, sizeof(resp_buf) - offset,
+                      "Content-Length: %lu\r\n", (unsigned long)content_length);
+
+    offset += snprintf(resp_buf + offset, sizeof(resp_buf) - offset,
+                      "Accept-Ranges: bytes\r\n");
+
+    if (is_range_request)
+    {
+        offset += snprintf(resp_buf + offset, sizeof(resp_buf) - offset,
+                          "Content-Range: bytes %lu-%lu/%ld\r\n",
+                          (unsigned long)range_start, (unsigned long)range_end, file_size);
+    }
+
+    offset += snprintf(resp_buf + offset, sizeof(resp_buf) - offset, "\r\n");
+
+    // Send headers
+    send(conn->fd, resp_buf, offset, 0);
+
+    // Send body
+    send(conn->fd, file_data, content_length, 0);
+
+    free(file_data);
+    return CWH_OK;
+}
+
 // Handler for serving static files from a directory
 // Usage: cwh_route(srv, "GET", "/*", cwh_serve_static, "/path/to/www");
 cwh_error_t cwh_serve_static(cwh_request_t *req, cwh_conn_t *conn, void *root_dir)
@@ -1518,7 +1686,11 @@ cwh_error_t cwh_serve_static(cwh_request_t *req, cwh_conn_t *conn, void *root_di
     printf("Serving file: %s\n", file_path);
     fflush(stdout);
 
-    return cwh_send_file(conn, file_path);
+    // Check for Range header
+    const char *range_header = cwh_get_header(req, "Range");
+
+    // Use range-aware file sending
+    return cwh_send_file_range(conn, file_path, range_header);
 }
 
 // ============================================================================
