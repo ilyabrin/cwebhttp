@@ -73,10 +73,23 @@ typedef struct cwh_conn
     int fd;
     char *host;
     int port;
-    bool keep_alive;      // Connection supports keep-alive
-    time_t last_used;     // Timestamp of last use (for timeout)
+    bool keep_alive;       // Connection supports keep-alive
+    time_t last_used;      // Timestamp of last use (for timeout)
     struct cwh_conn *next; // For connection pool linked list
 } cwh_conn_t;
+
+// Cookie structure for cookie jar
+typedef struct cwh_cookie
+{
+    char *name;              // Cookie name (allocated)
+    char *value;             // Cookie value (allocated)
+    char *domain;            // Domain (allocated, e.g., ".example.com")
+    char *path;              // Path (allocated, e.g., "/")
+    time_t expires;          // Expiration time (0 = session cookie)
+    bool secure;             // Secure flag (HTTPS only)
+    bool http_only;          // HttpOnly flag (no JavaScript access)
+    struct cwh_cookie *next; // Linked list
+} cwh_cookie_t;
 
 // Клиент API
 cwh_conn_t *cwh_connect(const char *url, int timeout_ms);
@@ -85,10 +98,16 @@ cwh_error_t cwh_read_res(cwh_conn_t *conn, cwh_response_t *res);
 void cwh_close(cwh_conn_t *conn);
 
 // Connection pool API (for keep-alive support)
-void cwh_pool_init(void);           // Initialize connection pool
-void cwh_pool_cleanup(void);        // Cleanup all pooled connections
-void cwh_pool_return(cwh_conn_t *conn); // Return connection to pool or close it
+void cwh_pool_init(void);                             // Initialize connection pool
+void cwh_pool_cleanup(void);                          // Cleanup all pooled connections
+void cwh_pool_return(cwh_conn_t *conn);               // Return connection to pool or close it
 cwh_conn_t *cwh_pool_get(const char *host, int port); // Get connection from pool
+
+// Cookie jar API (for automatic cookie management)
+void cwh_cookie_jar_init(void);                                             // Initialize cookie jar
+void cwh_cookie_jar_cleanup(void);                                          // Free all cookies
+void cwh_cookie_jar_add(const char *domain, const char *set_cookie_header); // Add cookie from Set-Cookie header
+char *cwh_cookie_jar_get(const char *domain, const char *path);             // Get cookies for domain/path (returns allocated string)
 
 // Сервер API (пока sync, async потом)
 typedef cwh_error_t (*cwh_handler_t)(cwh_request_t *req, cwh_conn_t *conn, void *user_data);

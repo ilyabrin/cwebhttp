@@ -73,7 +73,7 @@ static int set_nonblocking(int fd)
 // Connection Pool for Keep-Alive Support
 // ============================================================================
 
-#define CWH_POOL_MAX_IDLE_TIME 60  // Close connections idle for 60 seconds
+#define CWH_POOL_MAX_IDLE_TIME 60   // Close connections idle for 60 seconds
 #define CWH_POOL_MAX_CONNECTIONS 10 // Maximum pooled connections
 
 static cwh_conn_t *g_connection_pool = NULL; // Head of connection pool linked list
@@ -183,6 +183,291 @@ void cwh_pool_cleanup(void)
 
 // ============================================================================
 // End Connection Pool
+// ============================================================================
+
+// ============================================================================
+// Cookie Jar Implementation
+// ============================================================================
+
+static cwh_cookie_t *g_cookie_jar = NULL; // Global cookie jar (linked list)
+
+// Initialize cookie jar
+void cwh_cookie_jar_init(void)
+{
+    g_cookie_jar = NULL;
+}
+
+// Free a single cookie
+static void cwh_cookie_free(cwh_cookie_t *cookie)
+{
+    if (!cookie)
+        return;
+
+    free(cookie->name);
+    free(cookie->value);
+    free(cookie->domain);
+    free(cookie->path);
+    free(cookie);
+}
+
+// Cleanup all cookies
+void cwh_cookie_jar_cleanup(void)
+{
+    cwh_cookie_t *curr = g_cookie_jar;
+    while (curr)
+    {
+        cwh_cookie_t *next = curr->next;
+        cwh_cookie_free(curr);
+        curr = next;
+    }
+    g_cookie_jar = NULL;
+}
+
+// Helper: duplicate a string (malloc)
+static char *cwh_strdup(const char *str)
+{
+    if (!str)
+        return NULL;
+    size_t len = strlen(str);
+    char *dup = malloc(len + 1);
+    if (dup)
+    {
+        memcpy(dup, str, len);
+        dup[len] = '\0';
+    }
+    return dup;
+}
+
+// Helper: trim whitespace from string (modifies in-place)
+static void cwh_trim(char *str)
+{
+    if (!str)
+        return;
+
+    // Trim leading whitespace
+    char *start = str;
+    while (*start && (*start == ' ' || *start == '\t'))
+        start++;
+
+    // Trim trailing whitespace
+    char *end = start + strlen(start) - 1;
+    while (end > start && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n'))
+        end--;
+
+    // Move trimmed string to beginning
+    size_t len = end - start + 1;
+    memmove(str, start, len);
+    str[len] = '\0';
+}
+
+// Add cookie from Set-Cookie header
+// Format: "name=value; Domain=.example.com; Path=/; Expires=...; Secure; HttpOnly"
+void cwh_cookie_jar_add(const char *domain, const char *set_cookie_header)
+{
+    if (!domain || !set_cookie_header)
+        return;
+
+    // Parse Set-Cookie header
+    // Make a copy because we'll modify it
+    char header_copy[2048];
+    size_t header_len = strlen(set_cookie_header);
+    if (header_len >= sizeof(header_copy))
+        header_len = sizeof(header_copy) - 1;
+    memcpy(header_copy, set_cookie_header, header_len);
+    header_copy[header_len] = '\0';
+
+    // Create new cookie
+    cwh_cookie_t *cookie = calloc(1, sizeof(cwh_cookie_t));
+    if (!cookie)
+        return;
+
+    // Default values
+    cookie->domain = cwh_strdup(domain);
+    cookie->path = cwh_strdup("/");
+    cookie->expires = 0; // Session cookie by default
+    cookie->secure = false;
+    cookie->http_only = false;
+
+    // Parse name=value (first part before ';')
+    char *semicolon = strchr(header_copy, ';');
+    char *name_value = header_copy;
+    if (semicolon)
+        *semicolon = '\0';
+
+    char *equals = strchr(name_value, '=');
+    if (equals)
+    {
+        *equals = '\0';
+        cookie->name = cwh_strdup(name_value);
+        cookie->value = cwh_strdup(equals + 1);
+        cwh_trim(cookie->name);
+        cwh_trim(cookie->value);
+    }
+
+    // Parse attributes (after first ';')
+    if (semicolon)
+    {
+        char *attr = semicolon + 1;
+        while (attr && *attr)
+        {
+            // Skip whitespace
+            while (*attr && (*attr == ' ' || *attr == '\t'))
+                attr++;
+
+            // Find next semicolon
+            char *next_semi = strchr(attr, ';');
+            if (next_semi)
+                *next_semi = '\0';
+
+            // Parse attribute
+            if (strncasecmp(attr, "Domain=", 7) == 0)
+            {
+                free(cookie->domain);
+                cookie->domain = cwh_strdup(attr + 7);
+                cwh_trim(cookie->domain);
+            }
+            else if (strncasecmp(attr, "Path=", 5) == 0)
+            {
+                free(cookie->path);
+                cookie->path = cwh_strdup(attr + 5);
+                cwh_trim(cookie->path);
+            }
+            else if (strncasecmp(attr, "Secure", 6) == 0)
+            {
+                cookie->secure = true;
+            }
+            else if (strncasecmp(attr, "HttpOnly", 8) == 0)
+            {
+                cookie->http_only = true;
+            }
+            // Note: We're skipping Expires/Max-Age parsing for simplicity
+            // Cookies will be session cookies (expire when jar is cleaned up)
+
+            // Move to next attribute
+            attr = next_semi ? next_semi + 1 : NULL;
+        }
+    }
+
+    // Remove existing cookie with same name/domain/path
+    cwh_cookie_t **prev_ptr = &g_cookie_jar;
+    cwh_cookie_t *curr = g_cookie_jar;
+    while (curr)
+    {
+        if (curr->name && cookie->name && strcmp(curr->name, cookie->name) == 0 &&
+            curr->domain && cookie->domain && strcmp(curr->domain, cookie->domain) == 0 &&
+            curr->path && cookie->path && strcmp(curr->path, cookie->path) == 0)
+        {
+            // Remove old cookie
+            *prev_ptr = curr->next;
+            cwh_cookie_free(curr);
+            break;
+        }
+        prev_ptr = &curr->next;
+        curr = curr->next;
+    }
+
+    // Add new cookie to head of list
+    cookie->next = g_cookie_jar;
+    g_cookie_jar = cookie;
+}
+
+// Helper: check if domain matches cookie domain
+// Cookie domain ".example.com" matches "www.example.com" and "example.com"
+static bool cwh_domain_match(const char *domain, const char *cookie_domain)
+{
+    if (!domain || !cookie_domain)
+        return false;
+
+    // Exact match
+    if (strcmp(domain, cookie_domain) == 0)
+        return true;
+
+    // Cookie domain starts with '.' - it's a suffix match
+    if (cookie_domain[0] == '.')
+    {
+        size_t domain_len = strlen(domain);
+        size_t cookie_len = strlen(cookie_domain);
+
+        // Check if domain ends with cookie_domain
+        if (domain_len >= cookie_len)
+        {
+            const char *suffix = domain + (domain_len - cookie_len);
+            if (strcmp(suffix, cookie_domain) == 0)
+                return true;
+
+            // Also check without the leading '.'
+            if (strcmp(domain, cookie_domain + 1) == 0)
+                return true;
+        }
+    }
+
+    return false;
+}
+
+// Helper: check if path matches cookie path
+static bool cwh_path_match(const char *path, const char *cookie_path)
+{
+    if (!path || !cookie_path)
+        return false;
+
+    // Cookie path must be a prefix of request path
+    size_t cookie_len = strlen(cookie_path);
+    return strncmp(path, cookie_path, cookie_len) == 0;
+}
+
+// Get cookies for domain/path
+// Returns allocated string with "name1=value1; name2=value2" format
+// Caller must free() the returned string
+char *cwh_cookie_jar_get(const char *domain, const char *path)
+{
+    if (!domain || !path)
+        return NULL;
+
+    // Build cookie string
+    char cookie_str[4096] = {0};
+    size_t offset = 0;
+    bool first = true;
+
+    cwh_cookie_t *curr = g_cookie_jar;
+    while (curr)
+    {
+        // Check if cookie matches domain and path
+        if (cwh_domain_match(domain, curr->domain) &&
+            cwh_path_match(path, curr->path))
+        {
+            // Add separator if not first cookie
+            if (!first && offset < sizeof(cookie_str) - 2)
+            {
+                cookie_str[offset++] = ';';
+                cookie_str[offset++] = ' ';
+            }
+
+            // Add cookie name=value
+            if (curr->name && curr->value)
+            {
+                int written = snprintf(cookie_str + offset, sizeof(cookie_str) - offset,
+                                       "%s=%s", curr->name, curr->value);
+                if (written > 0)
+                {
+                    offset += written;
+                    first = false;
+                }
+            }
+        }
+
+        curr = curr->next;
+    }
+
+    // Return NULL if no cookies
+    if (offset == 0)
+        return NULL;
+
+    // Return allocated copy
+    return cwh_strdup(cookie_str);
+}
+
+// ============================================================================
+// End Cookie Jar
 // ============================================================================
 
 // Connect to host with timeout
@@ -322,7 +607,7 @@ cwh_conn_t *cwh_connect(const char *url, int timeout_ms)
     conn->fd = sock;
     conn->host = strdup(host);
     conn->port = parsed.port;
-    conn->keep_alive = false;    // Will be set to true if server supports it
+    conn->keep_alive = false; // Will be set to true if server supports it
     conn->last_used = time(NULL);
     conn->next = NULL;
 
@@ -430,6 +715,15 @@ cwh_error_t cwh_send_req(cwh_conn_t *conn, cwh_method_t method, const char *path
     offset += snprintf(req_buf + offset, sizeof(req_buf) - offset,
                        "Accept-Encoding: gzip, deflate\r\n");
 
+    // Cookie header (automatic cookie management)
+    char *cookies = cwh_cookie_jar_get(conn->host, path);
+    if (cookies)
+    {
+        offset += snprintf(req_buf + offset, sizeof(req_buf) - offset,
+                           "Cookie: %s\r\n", cookies);
+        free(cookies);
+    }
+
     // Additional headers
     if (headers)
     {
@@ -500,6 +794,19 @@ cwh_error_t cwh_read_res(cwh_conn_t *conn, cwh_response_t *res)
         // Default to keep-alive for HTTP/1.1, close for HTTP/1.0
         // We assume HTTP/1.1 unless explicitly stated otherwise
         conn->keep_alive = true;
+    }
+
+    // Process Set-Cookie headers (automatic cookie management)
+    // Note: HTTP allows multiple Set-Cookie headers, so we need to check all headers
+    for (size_t i = 0; i < res->num_headers * 2; i += 2)
+    {
+        if (res->headers[i] && strcasecmp(res->headers[i], "Set-Cookie") == 0)
+        {
+            if (res->headers[i + 1])
+            {
+                cwh_cookie_jar_add(conn->host, res->headers[i + 1]);
+            }
+        }
     }
 
     return CWH_OK;
@@ -2067,12 +2374,12 @@ static cwh_error_t cwh_request_simple(const char *url, cwh_method_t method,
             // Relative URL - combine with current host
             // Format: scheme://host:port/path
             int len = snprintf(redirect_url_buf, sizeof(redirect_url_buf),
-                              "%s://%s", parsed.scheme, parsed.host);
+                               "%s://%s", parsed.scheme, parsed.host);
 
             if (parsed.port_str)
             {
                 len += snprintf(redirect_url_buf + len, sizeof(redirect_url_buf) - len,
-                               ":%s", parsed.port_str);
+                                ":%s", parsed.port_str);
             }
 
             // Add the relative path
