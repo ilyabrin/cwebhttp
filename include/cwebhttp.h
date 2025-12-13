@@ -126,6 +126,10 @@ cwh_error_t cwh_parse_url(const char *url, size_t len, cwh_url_t *parsed);
 cwh_error_t cwh_decode_chunked(const char *chunked_body, size_t chunked_len, char *out_buf, size_t *out_len);
 cwh_error_t cwh_encode_chunked(const char *body, size_t body_len, char *out_buf, size_t *out_len);
 
+// Response decompression (gzip/deflate)
+cwh_error_t cwh_decompress_gzip(const char *compressed, size_t compressed_len, char *out_buf, size_t *out_len);
+cwh_error_t cwh_decompress_deflate(const char *compressed, size_t compressed_len, char *out_buf, size_t *out_len);
+
 // High-level convenience API (one-liners for simple requests)
 cwh_error_t cwh_get(const char *url, cwh_response_t *res);
 cwh_error_t cwh_post(const char *url, const char *body, size_t body_len, cwh_response_t *res);

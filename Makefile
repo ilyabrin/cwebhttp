@@ -6,7 +6,7 @@ SRCS = src/cwebhttp.c
 ifeq ($(OS),Windows_NT)
 	# Windows
 	CFLAGS += -D_WIN32
-	LDFLAGS = -lws2_32
+	LDFLAGS = -lws2_32 -lz
 	MKDIR = if not exist $(subst /,\,$(1)) mkdir $(subst /,\,$(1))
 	RM = if exist build rmdir /s /q build
 	EXE_EXT = .exe
@@ -14,10 +14,10 @@ ifeq ($(OS),Windows_NT)
 else
 	# Unix-like (Linux, macOS, etc.)
 	UNAME_S := $(shell uname -s)
-	LDFLAGS = 
+	LDFLAGS = -lz
 	MKDIR = mkdir -p $(1)
 	RM = rm -rf build
-	EXE_EXT = 
+	EXE_EXT =
 	RUN_TEST = ./build/tests/$(1)
 endif
 

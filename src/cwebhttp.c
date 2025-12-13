@@ -9,6 +9,7 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <time.h>
+#include <zlib.h>
 
 #if defined(_WIN32) || defined(_WIN64)
 #include <winsock2.h>
@@ -425,6 +426,10 @@ cwh_error_t cwh_send_req(cwh_conn_t *conn, cwh_method_t method, const char *path
     offset += snprintf(req_buf + offset, sizeof(req_buf) - offset,
                        "Connection: keep-alive\r\n");
 
+    // Accept-Encoding header (indicate support for gzip and deflate compression)
+    offset += snprintf(req_buf + offset, sizeof(req_buf) - offset,
+                       "Accept-Encoding: gzip, deflate\r\n");
+
     // Additional headers
     if (headers)
     {
@@ -837,6 +842,34 @@ cwh_error_t cwh_parse_res(const char *buf, size_t len, cwh_response_t *res)
             }
             // If decode fails, keep original chunked body (graceful degradation)
         }
+
+        // Check if Content-Encoding is present (gzip/deflate compression)
+        const char *content_encoding = cwh_get_res_header(res, "Content-Encoding");
+        if (content_encoding)
+        {
+            static char decompressed_buf[65536]; // Static buffer for decompressed data (64KB)
+            size_t decompressed_len = sizeof(decompressed_buf);
+            cwh_error_t err = CWH_ERR_PARSE;
+
+            // Try gzip decompression
+            if (strncasecmp(content_encoding, "gzip", 4) == 0)
+            {
+                err = cwh_decompress_gzip(res->body, res->body_len, decompressed_buf, &decompressed_len);
+            }
+            // Try deflate decompression
+            else if (strncasecmp(content_encoding, "deflate", 7) == 0)
+            {
+                err = cwh_decompress_deflate(res->body, res->body_len, decompressed_buf, &decompressed_len);
+            }
+
+            // If decompression succeeded, update body
+            if (err == CWH_OK)
+            {
+                memcpy((char *)res->body, decompressed_buf, decompressed_len);
+                res->body_len = decompressed_len;
+            }
+            // If decompression fails, keep original compressed body (graceful degradation)
+        }
     }
 
     return CWH_OK;
@@ -1237,6 +1270,76 @@ cwh_error_t cwh_encode_chunked(const char *body, size_t body_len,
     offset += 5;
 
     *out_len = offset;
+    return CWH_OK;
+}
+
+// ============================================================================
+// Response Decompression (gzip/deflate)
+// ============================================================================
+
+// Decompress gzip-compressed data
+// gzip uses zlib with gzip header (window bits = 15 + 16)
+cwh_error_t cwh_decompress_gzip(const char *compressed, size_t compressed_len,
+                                char *out_buf, size_t *out_len)
+{
+    if (!compressed || !out_buf || !out_len)
+        return CWH_ERR_PARSE;
+
+    z_stream stream = {0};
+    stream.next_in = (Bytef *)compressed;
+    stream.avail_in = (uInt)compressed_len;
+    stream.next_out = (Bytef *)out_buf;
+    stream.avail_out = (uInt)(*out_len);
+
+    // Initialize for gzip decompression (window bits = 15 + 16)
+    // 15 = max window size, +16 = gzip format
+    int ret = inflateInit2(&stream, 15 + 16);
+    if (ret != Z_OK)
+        return CWH_ERR_PARSE;
+
+    // Decompress
+    ret = inflate(&stream, Z_FINISH);
+    if (ret != Z_STREAM_END)
+    {
+        inflateEnd(&stream);
+        return CWH_ERR_PARSE;
+    }
+
+    *out_len = stream.total_out;
+    inflateEnd(&stream);
+    return CWH_OK;
+}
+
+// Decompress deflate-compressed data
+// deflate uses raw zlib (window bits = -15 for raw deflate)
+cwh_error_t cwh_decompress_deflate(const char *compressed, size_t compressed_len,
+                                   char *out_buf, size_t *out_len)
+{
+    if (!compressed || !out_buf || !out_len)
+        return CWH_ERR_PARSE;
+
+    z_stream stream = {0};
+    stream.next_in = (Bytef *)compressed;
+    stream.avail_in = (uInt)compressed_len;
+    stream.next_out = (Bytef *)out_buf;
+    stream.avail_out = (uInt)(*out_len);
+
+    // Initialize for deflate decompression (window bits = -15 for raw deflate)
+    // Negative value means raw deflate (no zlib header)
+    int ret = inflateInit2(&stream, -15);
+    if (ret != Z_OK)
+        return CWH_ERR_PARSE;
+
+    // Decompress
+    ret = inflate(&stream, Z_FINISH);
+    if (ret != Z_STREAM_END)
+    {
+        inflateEnd(&stream);
+        return CWH_ERR_PARSE;
+    }
+
+    *out_len = stream.total_out;
+    inflateEnd(&stream);
     return CWH_OK;
 }
 
