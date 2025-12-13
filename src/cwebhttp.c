@@ -976,7 +976,7 @@ cwh_error_t cwh_parse_url(const char *url, size_t len, cwh_url_t *parsed)
 // Decode chunked transfer encoding
 // Format: <chunk-size-hex>\r\n<chunk-data>\r\n ... 0\r\n\r\n
 cwh_error_t cwh_decode_chunked(const char *chunked_body, size_t chunked_len,
-                                 char *out_buf, size_t *out_len)
+                               char *out_buf, size_t *out_len)
 {
     if (!chunked_body || !out_buf || !out_len)
         return CWH_ERR_PARSE;
@@ -1050,7 +1050,7 @@ cwh_error_t cwh_decode_chunked(const char *chunked_body, size_t chunked_len,
 // Encode data as chunked transfer encoding
 // Format: <chunk-size-hex>\r\n<chunk-data>\r\n ... 0\r\n\r\n
 cwh_error_t cwh_encode_chunked(const char *body, size_t body_len,
-                                 char *out_buf, size_t *out_len)
+                               char *out_buf, size_t *out_len)
 {
     if (!body || !out_buf || !out_len)
         return CWH_ERR_PARSE;
@@ -1109,7 +1109,7 @@ cwh_server_t *cwh_listen(const char *addr_port, int backlog)
 
     // Parse addr:port (simple format: "8080" or "localhost:8080")
     char host[256] = "0.0.0.0"; // Default: bind to all interfaces
-    int port = 8080;             // Default port
+    int port = 8080;            // Default port
 
     // Try to parse port from addr_port
     const char *colon = strchr(addr_port, ':');
@@ -1174,7 +1174,7 @@ cwh_server_t *cwh_listen(const char *addr_port, int backlog)
 
 // Add route to server
 cwh_error_t cwh_route(cwh_server_t *srv, const char *method, const char *pattern,
-                       cwh_handler_t handler, void *user_data)
+                      cwh_handler_t handler, void *user_data)
 {
     if (!srv || !handler)
         return CWH_ERR_PARSE;
@@ -1323,7 +1323,7 @@ void cwh_free_server(cwh_server_t *srv)
 
 // Server response helpers
 cwh_error_t cwh_send_response(cwh_conn_t *conn, int status, const char *content_type,
-                                const char *body, size_t body_len)
+                              const char *body, size_t body_len)
 {
     if (!conn || conn->fd < 0)
         return CWH_ERR_NET;
@@ -1493,7 +1493,7 @@ cwh_error_t cwh_send_file(cwh_conn_t *conn, const char *file_path)
 // Parse Range header (supports "bytes=start-end" format)
 // Returns 1 if range parsed successfully, 0 if no range or invalid
 static int parse_range_header(const char *range_header, size_t file_size,
-                               size_t *out_start, size_t *out_end)
+                              size_t *out_start, size_t *out_end)
 {
     if (!range_header || !out_start || !out_end)
         return 0;
@@ -1556,7 +1556,7 @@ static int parse_range_header(const char *range_header, size_t file_size,
 
 // Send file with Range request support (HTTP 206 Partial Content)
 cwh_error_t cwh_send_file_range(cwh_conn_t *conn, const char *file_path,
-                                 const char *range_header)
+                                const char *range_header)
 {
     if (!conn || !file_path)
         return CWH_ERR_PARSE;
@@ -1583,7 +1583,7 @@ cwh_error_t cwh_send_file_range(cwh_conn_t *conn, const char *file_path,
     if (range_header)
     {
         is_range_request = parse_range_header(range_header, (size_t)file_size,
-                                               &range_start, &range_end);
+                                              &range_start, &range_end);
     }
 
     // Calculate content length
@@ -1620,30 +1620,30 @@ cwh_error_t cwh_send_file_range(cwh_conn_t *conn, const char *file_path,
     if (is_range_request)
     {
         offset += snprintf(resp_buf + offset, sizeof(resp_buf) - offset,
-                          "HTTP/1.1 206 Partial Content\r\n");
+                           "HTTP/1.1 206 Partial Content\r\n");
     }
     else
     {
         offset += snprintf(resp_buf + offset, sizeof(resp_buf) - offset,
-                          "HTTP/1.1 200 OK\r\n");
+                           "HTTP/1.1 200 OK\r\n");
     }
 
     // Headers
     const char *mime_type = cwh_get_mime_type(file_path);
     offset += snprintf(resp_buf + offset, sizeof(resp_buf) - offset,
-                      "Content-Type: %s\r\n", mime_type);
+                       "Content-Type: %s\r\n", mime_type);
 
     offset += snprintf(resp_buf + offset, sizeof(resp_buf) - offset,
-                      "Content-Length: %lu\r\n", (unsigned long)content_length);
+                       "Content-Length: %lu\r\n", (unsigned long)content_length);
 
     offset += snprintf(resp_buf + offset, sizeof(resp_buf) - offset,
-                      "Accept-Ranges: bytes\r\n");
+                       "Accept-Ranges: bytes\r\n");
 
     if (is_range_request)
     {
         offset += snprintf(resp_buf + offset, sizeof(resp_buf) - offset,
-                          "Content-Range: bytes %lu-%lu/%ld\r\n",
-                          (unsigned long)range_start, (unsigned long)range_end, file_size);
+                           "Content-Range: bytes %lu-%lu/%ld\r\n",
+                           (unsigned long)range_start, (unsigned long)range_end, file_size);
     }
 
     offset += snprintf(resp_buf + offset, sizeof(resp_buf) - offset, "\r\n");

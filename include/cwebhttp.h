@@ -57,13 +57,13 @@ typedef struct
 // URL structure (zero-alloc: указатели в буфер)
 typedef struct
 {
-    char *scheme;      // "http" or "https"
-    char *host;        // "example.com" or "192.168.1.1"
-    char *port_str;    // "8080" or NULL (use default)
-    int port;          // 80, 443, or parsed custom port
-    char *path;        // "/api/users" or "/" (default)
-    char *query;       // "page=1&limit=10" or NULL
-    char *fragment;    // "section" or NULL (after #)
+    char *scheme;   // "http" or "https"
+    char *host;     // "example.com" or "192.168.1.1"
+    char *port_str; // "8080" or NULL (use default)
+    int port;       // 80, 443, or parsed custom port
+    char *path;     // "/api/users" or "/" (default)
+    char *query;    // "page=1&limit=10" or NULL
+    char *fragment; // "section" or NULL (after #)
     bool is_valid;
 } cwh_url_t;
 
@@ -91,7 +91,7 @@ void cwh_free_server(cwh_server_t *srv);
 
 // Server response helpers
 cwh_error_t cwh_send_response(cwh_conn_t *conn, int status, const char *content_type,
-                               const char *body, size_t body_len);
+                              const char *body, size_t body_len);
 cwh_error_t cwh_send_status(cwh_conn_t *conn, int status, const char *message);
 
 // Static file serving
@@ -126,18 +126,18 @@ cwh_error_t cwh_delete(const char *url, cwh_response_t *res);
 // Route entry (internal)
 typedef struct cwh_route
 {
-    char *method;                // "GET", "POST", etc. (NULL = any method)
-    char *pattern;               // "/api/users", "/", etc.
-    cwh_handler_t handler;       // Request handler function
-    void *user_data;             // User data passed to handler
-    struct cwh_route *next;      // Linked list
+    char *method;           // "GET", "POST", etc. (NULL = any method)
+    char *pattern;          // "/api/users", "/", etc.
+    cwh_handler_t handler;  // Request handler function
+    void *user_data;        // User data passed to handler
+    struct cwh_route *next; // Linked list
 } cwh_route_t;
 
 // Внутренние (не для юзера)
 struct cwh_server
 {
-    int sock;                    // Server socket
-    cwh_route_t *routes;         // Linked list of routes
+    int sock;            // Server socket
+    cwh_route_t *routes; // Linked list of routes
 };
 
 #endif // CWEBHTTP_H
