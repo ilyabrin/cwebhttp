@@ -1,0 +1,5 @@
+{
+  "server": "cwebhttp",
+  "version": "0.3.0",
+  "features": ["HTTP/1.1", "Static Files", "Chunked Encoding"]
+}

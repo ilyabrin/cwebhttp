@@ -13,6 +13,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #define strncasecmp _strnicmp
+#define strcasecmp _stricmp
 #else
 #include <sys/socket.h>
 #include <sys/select.h>
@@ -1175,7 +1176,7 @@ cwh_server_t *cwh_listen(const char *addr_port, int backlog)
 cwh_error_t cwh_route(cwh_server_t *srv, const char *method, const char *pattern,
                        cwh_handler_t handler, void *user_data)
 {
-    if (!srv || !pattern || !handler)
+    if (!srv || !handler)
         return CWH_ERR_PARSE;
 
     // Allocate route
@@ -1185,7 +1186,8 @@ cwh_error_t cwh_route(cwh_server_t *srv, const char *method, const char *pattern
 
     // Copy method (can be NULL for any method)
     route->method = method ? strdup(method) : NULL;
-    route->pattern = strdup(pattern);
+    // Copy pattern (can be NULL for wildcard matching)
+    route->pattern = pattern ? strdup(pattern) : NULL;
     route->handler = handler;
     route->user_data = user_data;
     route->next = NULL;
@@ -1215,8 +1217,8 @@ static cwh_route_t *find_route(cwh_server_t *srv, cwh_request_t *req)
         if (r->method && strncasecmp(r->method, req->method_str, strlen(r->method)) != 0)
             continue;
 
-        // Check pattern match (simple exact match for now)
-        if (strcmp(r->pattern, req->path) == 0)
+        // Check pattern match (NULL pattern = match any path, otherwise exact match)
+        if (r->pattern == NULL || strcmp(r->pattern, req->path) == 0)
             return r;
     }
     return NULL;
@@ -1365,6 +1367,158 @@ cwh_error_t cwh_send_status(cwh_conn_t *conn, int status, const char *message)
         message = "OK";
 
     return cwh_send_response(conn, status, "text/plain", message, strlen(message));
+}
+
+// ============================================================================
+// Static File Serving
+// ============================================================================
+
+// MIME type mapping (common types)
+const char *cwh_get_mime_type(const char *path)
+{
+    if (!path)
+        return "application/octet-stream";
+
+    // Find last dot for extension
+    const char *ext = strrchr(path, '.');
+    if (!ext)
+        return "application/octet-stream";
+
+    ext++; // Skip the dot
+
+    // Common text formats
+    if (strcasecmp(ext, "html") == 0 || strcasecmp(ext, "htm") == 0)
+        return "text/html";
+    if (strcasecmp(ext, "css") == 0)
+        return "text/css";
+    if (strcasecmp(ext, "js") == 0)
+        return "text/javascript";
+    if (strcasecmp(ext, "json") == 0)
+        return "application/json";
+    if (strcasecmp(ext, "xml") == 0)
+        return "application/xml";
+    if (strcasecmp(ext, "txt") == 0)
+        return "text/plain";
+
+    // Images
+    if (strcasecmp(ext, "png") == 0)
+        return "image/png";
+    if (strcasecmp(ext, "jpg") == 0 || strcasecmp(ext, "jpeg") == 0)
+        return "image/jpeg";
+    if (strcasecmp(ext, "gif") == 0)
+        return "image/gif";
+    if (strcasecmp(ext, "svg") == 0)
+        return "image/svg+xml";
+    if (strcasecmp(ext, "ico") == 0)
+        return "image/x-icon";
+    if (strcasecmp(ext, "webp") == 0)
+        return "image/webp";
+
+    // Fonts
+    if (strcasecmp(ext, "woff") == 0)
+        return "font/woff";
+    if (strcasecmp(ext, "woff2") == 0)
+        return "font/woff2";
+    if (strcasecmp(ext, "ttf") == 0)
+        return "font/ttf";
+    if (strcasecmp(ext, "otf") == 0)
+        return "font/otf";
+
+    // Archives
+    if (strcasecmp(ext, "zip") == 0)
+        return "application/zip";
+    if (strcasecmp(ext, "gz") == 0)
+        return "application/gzip";
+    if (strcasecmp(ext, "tar") == 0)
+        return "application/x-tar";
+
+    // Documents
+    if (strcasecmp(ext, "pdf") == 0)
+        return "application/pdf";
+
+    // Default
+    return "application/octet-stream";
+}
+
+// Send a file to the client
+cwh_error_t cwh_send_file(cwh_conn_t *conn, const char *file_path)
+{
+    if (!conn || !file_path)
+        return CWH_ERR_PARSE;
+
+    // Open file
+    FILE *fp = fopen(file_path, "rb");
+    if (!fp)
+        return cwh_send_status(conn, 404, "File Not Found");
+
+    // Get file size
+    fseek(fp, 0, SEEK_END);
+    long file_size = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+
+    if (file_size < 0 || file_size > 10 * 1024 * 1024) // Max 10MB
+    {
+        fclose(fp);
+        return cwh_send_status(conn, 413, "File Too Large");
+    }
+
+    // Allocate buffer for file
+    char *file_data = (char *)malloc((size_t)file_size);
+    if (!file_data)
+    {
+        fclose(fp);
+        return CWH_ERR_ALLOC;
+    }
+
+    // Read file
+    size_t bytes_read = fread(file_data, 1, (size_t)file_size, fp);
+    fclose(fp);
+
+    if (bytes_read != (size_t)file_size)
+    {
+        free(file_data);
+        return cwh_send_status(conn, 500, "File Read Error");
+    }
+
+    // Get MIME type
+    const char *mime_type = cwh_get_mime_type(file_path);
+
+    // Send file
+    cwh_error_t err = cwh_send_response(conn, 200, mime_type, file_data, bytes_read);
+
+    free(file_data);
+    return err;
+}
+
+// Handler for serving static files from a directory
+// Usage: cwh_route(srv, "GET", "/*", cwh_serve_static, "/path/to/www");
+cwh_error_t cwh_serve_static(cwh_request_t *req, cwh_conn_t *conn, void *root_dir)
+{
+    if (!req || !conn || !root_dir)
+        return cwh_send_status(conn, 500, "Internal Server Error");
+
+    const char *root = (const char *)root_dir;
+    const char *path = req->path;
+
+    // Security: prevent directory traversal
+    if (strstr(path, "..") != NULL)
+        return cwh_send_status(conn, 403, "Forbidden");
+
+    // Build full file path
+    char file_path[1024];
+    snprintf(file_path, sizeof(file_path), "%s%s", root, path);
+
+    // If path ends with /, serve index.html
+    size_t path_len = strlen(file_path);
+    if (path_len > 0 && file_path[path_len - 1] == '/')
+    {
+        snprintf(file_path + path_len, sizeof(file_path) - path_len, "index.html");
+    }
+
+    printf("Serving file: %s\n", file_path);
+    fflush(stdout);
+
+    return cwh_send_file(conn, file_path);
 }
 
 // ============================================================================

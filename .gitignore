@@ -58,3 +58,12 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# Build directory
+build/
+
+# Test output files
+*.log
+*_output.txt
+*_test.txt
+server*.txt
