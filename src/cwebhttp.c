@@ -1698,6 +1698,26 @@ cwh_error_t cwh_serve_static(cwh_request_t *req, cwh_conn_t *conn, void *root_di
 // ============================================================================
 
 // Internal helper for high-level requests
+// Maximum number of redirects to follow (prevent infinite loops)
+#define CWH_MAX_REDIRECTS 10
+
+// Helper function to check if a status code is a redirect
+static int is_redirect_status(int status)
+{
+    return (status == 301 || status == 302 || status == 303 ||
+            status == 307 || status == 308);
+}
+
+// Helper function to determine if the request method should change on redirect
+// 302/303 change POST to GET, others preserve the method
+static cwh_method_t get_redirect_method(int status, cwh_method_t original_method)
+{
+    if ((status == 302 || status == 303) && original_method == CWH_METHOD_POST)
+        return CWH_METHOD_GET;
+
+    return original_method;
+}
+
 static cwh_error_t cwh_request_simple(const char *url, cwh_method_t method,
                                       const char *body, size_t body_len,
                                       cwh_response_t *res)
@@ -1705,51 +1725,151 @@ static cwh_error_t cwh_request_simple(const char *url, cwh_method_t method,
     if (!url || !res)
         return CWH_ERR_PARSE;
 
-    // Parse URL to extract path
-    cwh_url_t parsed = {0};
-    if (cwh_parse_url(url, strlen(url), &parsed) != CWH_OK)
-        return CWH_ERR_PARSE;
+    // Redirect tracking
+    int redirect_count = 0;
+    char visited_urls[CWH_MAX_REDIRECTS][2048] = {0};
 
-    // Connect
-    cwh_conn_t *conn = cwh_connect(url, 5000);
-    if (!conn)
-        return CWH_ERR_NET;
+    // Current request parameters
+    const char *current_url = url;
+    cwh_method_t current_method = method;
+    const char *current_body = body;
+    size_t current_body_len = body_len;
 
-    // Extract path (or use "/" as default)
-    const char *path = "/";
-    if (parsed.path)
+    // Response buffer for redirects
+    static char redirect_url_buf[2048];
+
+    while (redirect_count < CWH_MAX_REDIRECTS)
     {
-        // Find path length
-        const char *path_end = parsed.path;
-        while (*path_end && *path_end != '?' && *path_end != '#')
-            path_end++;
+        // Parse URL to extract path
+        cwh_url_t parsed = {0};
+        if (cwh_parse_url(current_url, strlen(current_url), &parsed) != CWH_OK)
+            return CWH_ERR_PARSE;
 
-        // Create null-terminated path string
+        // Connect
+        cwh_conn_t *conn = cwh_connect(current_url, 5000);
+        if (!conn)
+            return CWH_ERR_NET;
+
+        // Extract path (or use "/" as default)
+        const char *path = "/";
         static char path_buf[2048];
-        size_t path_len = path_end - parsed.path;
-        if (path_len >= sizeof(path_buf))
-            path_len = sizeof(path_buf) - 1;
+        if (parsed.path)
+        {
+            // Find path length
+            const char *path_end = parsed.path;
+            while (*path_end && *path_end != '?' && *path_end != '#')
+                path_end++;
 
-        memcpy(path_buf, parsed.path, path_len);
-        path_buf[path_len] = '\0';
-        path = path_buf;
-    }
+            // Create null-terminated path string
+            size_t path_len = path_end - parsed.path;
+            if (path_len >= sizeof(path_buf))
+                path_len = sizeof(path_buf) - 1;
 
-    // Send request
-    cwh_error_t err = cwh_send_req(conn, method, path, NULL, body, body_len);
-    if (err != CWH_OK)
-    {
+            memcpy(path_buf, parsed.path, path_len);
+            path_buf[path_len] = '\0';
+            path = path_buf;
+        }
+
+        // Send request
+        cwh_error_t err = cwh_send_req(conn, current_method, path, NULL,
+                                       current_body, current_body_len);
+        if (err != CWH_OK)
+        {
+            cwh_close(conn);
+            return err;
+        }
+
+        // Read response
+        err = cwh_read_res(conn, res);
         cwh_close(conn);
-        return err;
+
+        if (err != CWH_OK)
+            return err;
+
+        // Check if this is a redirect
+        if (!is_redirect_status(res->status))
+        {
+            // Not a redirect, return the response
+            return CWH_OK;
+        }
+
+        // Get Location header for redirect
+        const char *location = cwh_get_res_header(res, "Location");
+        if (!location)
+        {
+            // Redirect without Location header - return error
+            return CWH_ERR_PARSE;
+        }
+
+        // Check for circular redirects - store visited URL
+        size_t url_len = strlen(current_url);
+        if (url_len >= sizeof(visited_urls[redirect_count]))
+            url_len = sizeof(visited_urls[redirect_count]) - 1;
+
+        memcpy(visited_urls[redirect_count], current_url, url_len);
+        visited_urls[redirect_count][url_len] = '\0';
+
+        // Handle relative vs absolute Location URLs
+        // If Location starts with '/', it's relative - build absolute URL
+        if (location[0] == '/')
+        {
+            // Relative URL - combine with current host
+            // Format: scheme://host:port/path
+            int len = snprintf(redirect_url_buf, sizeof(redirect_url_buf),
+                              "%s://%s", parsed.scheme, parsed.host);
+
+            if (parsed.port_str)
+            {
+                len += snprintf(redirect_url_buf + len, sizeof(redirect_url_buf) - len,
+                               ":%s", parsed.port_str);
+            }
+
+            // Add the relative path
+            size_t loc_len = strlen(location);
+            if ((size_t)len + loc_len >= sizeof(redirect_url_buf))
+                loc_len = sizeof(redirect_url_buf) - len - 1;
+
+            memcpy(redirect_url_buf + len, location, loc_len);
+            redirect_url_buf[len + loc_len] = '\0';
+        }
+        else
+        {
+            // Absolute URL - use as-is
+            size_t loc_len = strlen(location);
+            if (loc_len >= sizeof(redirect_url_buf))
+                loc_len = sizeof(redirect_url_buf) - 1;
+
+            memcpy(redirect_url_buf, location, loc_len);
+            redirect_url_buf[loc_len] = '\0';
+        }
+
+        // Check if we've already visited this URL (circular redirect)
+        for (int i = 0; i <= redirect_count; i++)
+        {
+            if (strcmp(visited_urls[i], redirect_url_buf) == 0)
+            {
+                // Circular redirect detected
+                return CWH_ERR_PARSE;
+            }
+        }
+
+        // Update method based on redirect type
+        current_method = get_redirect_method(res->status, current_method);
+
+        // For 303 and method changes, drop the body
+        if (current_method != method)
+        {
+            current_body = NULL;
+            current_body_len = 0;
+        }
+
+        // Follow the redirect
+        current_url = redirect_url_buf;
+        redirect_count++;
     }
 
-    // Read response
-    err = cwh_read_res(conn, res);
-
-    // Close connection
-    cwh_close(conn);
-
-    return err;
+    // Too many redirects
+    return CWH_ERR_PARSE;
 }
 
 // One-liner GET request
