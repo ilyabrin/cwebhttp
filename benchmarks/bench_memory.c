@@ -67,7 +67,7 @@ int main(void)
     printf("Parse result: %s\n", err == CWH_OK ? "OK" : "ERROR");
     printf("Malloc calls: %d\n", malloc_count);
     printf("Free calls: %d\n", free_count);
-    printf("Total allocated: %zu bytes\n", total_allocated);
+    printf("Total allocated: %lu bytes\n", (unsigned long)total_allocated);
     printf("✓ Zero-allocation parsing: %s\n\n",
            malloc_count == 0 ? "PASS" : "FAIL");
 
@@ -88,7 +88,7 @@ int main(void)
     printf("Parse result: %s\n", err == CWH_OK ? "OK" : "ERROR");
     printf("Malloc calls: %d\n", malloc_count);
     printf("Free calls: %d\n", free_count);
-    printf("Total allocated: %zu bytes\n", total_allocated);
+    printf("Total allocated: %lu bytes\n", (unsigned long)total_allocated);
     printf("✓ Zero-allocation parsing: %s\n\n",
            malloc_count == 0 ? "PASS" : "FAIL");
 
@@ -110,7 +110,7 @@ int main(void)
     printf("Parse result: %s\n", err == CWH_OK ? "OK" : "ERROR");
     printf("Malloc calls: %d\n", malloc_count);
     printf("Free calls: %d\n", free_count);
-    printf("Total allocated: %zu bytes\n", total_allocated);
+    printf("Total allocated: %lu bytes\n", (unsigned long)total_allocated);
     printf("✓ Zero-allocation parsing: %s\n\n",
            malloc_count == 0 ? "PASS" : "FAIL");
 
