@@ -25,6 +25,8 @@ all: examples build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT) bu
 
 examples: build/examples/minimal_server$(EXE_EXT) build/examples/simple_client$(EXE_EXT) build/examples/hello_server$(EXE_EXT) build/examples/file_server$(EXE_EXT)
 
+benchmarks: build/benchmarks/bench_parser$(EXE_EXT) build/benchmarks/bench_memory$(EXE_EXT) build/benchmarks/minimal_example$(EXE_EXT)
+
 test: build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT) build/tests/test_chunked$(EXE_EXT)
 	$(call RUN_TEST,test_parse)
 	$(call RUN_TEST,test_url)
@@ -60,6 +62,18 @@ build/tests/test_chunked$(EXE_EXT): tests/test_chunked.c tests/unity.c $(SRCS)
 	@$(call MKDIR,build/tests)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+build/benchmarks/bench_parser$(EXE_EXT): benchmarks/bench_parser.c $(SRCS)
+	@$(call MKDIR,build/benchmarks)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+build/benchmarks/bench_memory$(EXE_EXT): benchmarks/bench_memory.c $(SRCS)
+	@$(call MKDIR,build/benchmarks)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+build/benchmarks/minimal_example$(EXE_EXT): benchmarks/minimal_example.c $(SRCS)
+	@$(call MKDIR,build/benchmarks)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
 clean:
 	@$(RM)
 
@@ -73,4 +87,4 @@ docker-test: docker-build
 docker-shell: docker-build
 	docker run --rm -it cwebhttp-test /bin/bash
 
-.PHONY: all examples test tests clean docker-build docker-test docker-shell
+.PHONY: all examples benchmarks test tests clean docker-build docker-test docker-shell
