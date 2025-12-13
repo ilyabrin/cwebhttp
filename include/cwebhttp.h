@@ -67,12 +67,15 @@ typedef struct
     bool is_valid;
 } cwh_url_t;
 
-// Абстракция соединения (пока простой int fd)
+// Абстракция соединения с keep-alive поддержкой
 typedef struct cwh_conn
 {
     int fd;
     char *host;
     int port;
+    bool keep_alive;      // Connection supports keep-alive
+    time_t last_used;     // Timestamp of last use (for timeout)
+    struct cwh_conn *next; // For connection pool linked list
 } cwh_conn_t;
 
 // Клиент API
@@ -80,6 +83,12 @@ cwh_conn_t *cwh_connect(const char *url, int timeout_ms);
 cwh_error_t cwh_send_req(cwh_conn_t *conn, cwh_method_t method, const char *path, const char **headers, const char *body, size_t body_len);
 cwh_error_t cwh_read_res(cwh_conn_t *conn, cwh_response_t *res);
 void cwh_close(cwh_conn_t *conn);
+
+// Connection pool API (for keep-alive support)
+void cwh_pool_init(void);           // Initialize connection pool
+void cwh_pool_cleanup(void);        // Cleanup all pooled connections
+void cwh_pool_return(cwh_conn_t *conn); // Return connection to pool or close it
+cwh_conn_t *cwh_pool_get(const char *host, int port); // Get connection from pool
 
 // Сервер API (пока sync, async потом)
 typedef cwh_error_t (*cwh_handler_t)(cwh_request_t *req, cwh_conn_t *conn, void *user_data);

@@ -8,6 +8,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <stdlib.h>
+#include <time.h>
 
 #if defined(_WIN32) || defined(_WIN64)
 #include <winsock2.h>
@@ -67,6 +68,122 @@ static int set_nonblocking(int fd)
 #endif
 }
 
+// ============================================================================
+// Connection Pool for Keep-Alive Support
+// ============================================================================
+
+#define CWH_POOL_MAX_IDLE_TIME 60  // Close connections idle for 60 seconds
+#define CWH_POOL_MAX_CONNECTIONS 10 // Maximum pooled connections
+
+static cwh_conn_t *g_connection_pool = NULL; // Head of connection pool linked list
+static int g_pool_size = 0;                  // Current number of pooled connections
+
+// Initialize connection pool (called automatically on first use)
+void cwh_pool_init(void)
+{
+    g_connection_pool = NULL;
+    g_pool_size = 0;
+}
+
+// Get a connection from the pool for the given host:port
+// Returns NULL if no matching connection is available
+cwh_conn_t *cwh_pool_get(const char *host, int port)
+{
+    if (!host)
+        return NULL;
+
+    cwh_conn_t **prev_ptr = &g_connection_pool;
+    cwh_conn_t *curr = g_connection_pool;
+    time_t now = time(NULL);
+
+    while (curr)
+    {
+        // Check if this connection matches host:port and is still valid
+        if (curr->host && strcmp(curr->host, host) == 0 && curr->port == port)
+        {
+            // Check if connection is too old (idle timeout)
+            if (now - curr->last_used > CWH_POOL_MAX_IDLE_TIME)
+            {
+                // Connection expired - remove from pool and close
+                *prev_ptr = curr->next;
+                CLOSE_SOCKET(curr->fd);
+                free(curr->host);
+                free(curr);
+                g_pool_size--;
+                curr = *prev_ptr;
+                continue;
+            }
+
+            // Found a valid connection - remove from pool and return it
+            *prev_ptr = curr->next;
+            curr->next = NULL;
+            curr->last_used = now;
+            g_pool_size--;
+            return curr;
+        }
+
+        prev_ptr = &curr->next;
+        curr = curr->next;
+    }
+
+    return NULL; // No matching connection found
+}
+
+// Return a connection to the pool (or close it if not keep-alive)
+void cwh_pool_return(cwh_conn_t *conn)
+{
+    if (!conn)
+        return;
+
+    // If connection doesn't support keep-alive, close it immediately
+    if (!conn->keep_alive)
+    {
+        if (conn->fd >= 0)
+            CLOSE_SOCKET(conn->fd);
+        free(conn->host);
+        free(conn);
+        return;
+    }
+
+    // If pool is full, close oldest connection
+    if (g_pool_size >= CWH_POOL_MAX_CONNECTIONS)
+    {
+        // Close the connection instead of adding to pool
+        if (conn->fd >= 0)
+            CLOSE_SOCKET(conn->fd);
+        free(conn->host);
+        free(conn);
+        return;
+    }
+
+    // Add connection to pool
+    conn->last_used = time(NULL);
+    conn->next = g_connection_pool;
+    g_connection_pool = conn;
+    g_pool_size++;
+}
+
+// Cleanup all pooled connections (call at program exit)
+void cwh_pool_cleanup(void)
+{
+    cwh_conn_t *curr = g_connection_pool;
+    while (curr)
+    {
+        cwh_conn_t *next = curr->next;
+        if (curr->fd >= 0)
+            CLOSE_SOCKET(curr->fd);
+        free(curr->host);
+        free(curr);
+        curr = next;
+    }
+    g_connection_pool = NULL;
+    g_pool_size = 0;
+}
+
+// ============================================================================
+// End Connection Pool
+// ============================================================================
+
 // Connect to host with timeout
 cwh_conn_t *cwh_connect(const char *url, int timeout_ms)
 {
@@ -104,6 +221,16 @@ cwh_conn_t *cwh_connect(const char *url, int timeout_ms)
     host[host_len] = '\0';
 
     snprintf(port_str, sizeof(port_str), "%d", parsed.port);
+
+    // Try to get an existing connection from the pool
+    cwh_conn_t *conn = cwh_pool_get(host, parsed.port);
+    if (conn)
+    {
+        // Found a pooled connection - reuse it
+        return conn;
+    }
+
+    // No pooled connection available - create a new one
 
     // Resolve hostname using getaddrinfo
     struct addrinfo hints = {0};
@@ -184,7 +311,7 @@ cwh_conn_t *cwh_connect(const char *url, int timeout_ms)
         return NULL;
 
     // Create connection object
-    cwh_conn_t *conn = malloc(sizeof(cwh_conn_t));
+    conn = malloc(sizeof(cwh_conn_t));
     if (!conn)
     {
         CLOSE_SOCKET(sock);
@@ -194,6 +321,9 @@ cwh_conn_t *cwh_connect(const char *url, int timeout_ms)
     conn->fd = sock;
     conn->host = strdup(host);
     conn->port = parsed.port;
+    conn->keep_alive = false;    // Will be set to true if server supports it
+    conn->last_used = time(NULL);
+    conn->next = NULL;
 
     if (!conn->host)
     {
@@ -291,6 +421,10 @@ cwh_error_t cwh_send_req(cwh_conn_t *conn, cwh_method_t method, const char *path
     offset += snprintf(req_buf + offset, sizeof(req_buf) - offset,
                        "Host: %s\r\n", conn->host);
 
+    // Connection: keep-alive header (enable persistent connections)
+    offset += snprintf(req_buf + offset, sizeof(req_buf) - offset,
+                       "Connection: keep-alive\r\n");
+
     // Additional headers
     if (headers)
     {
@@ -342,20 +476,34 @@ cwh_error_t cwh_read_res(cwh_conn_t *conn, cwh_response_t *res)
     recv_buf[n] = '\0';
 
     // Parse response
-    return cwh_parse_res(recv_buf, n, res);
+    cwh_error_t err = cwh_parse_res(recv_buf, n, res);
+    if (err != CWH_OK)
+        return err;
+
+    // Check if server supports keep-alive
+    const char *connection_hdr = cwh_get_res_header(res, "Connection");
+    if (connection_hdr && strcasecmp(connection_hdr, "keep-alive") == 0)
+    {
+        conn->keep_alive = true;
+    }
+    else if (connection_hdr && strcasecmp(connection_hdr, "close") == 0)
+    {
+        conn->keep_alive = false;
+    }
+    else
+    {
+        // Default to keep-alive for HTTP/1.1, close for HTTP/1.0
+        // We assume HTTP/1.1 unless explicitly stated otherwise
+        conn->keep_alive = true;
+    }
+
+    return CWH_OK;
 }
 
 void cwh_close(cwh_conn_t *conn)
 {
-    if (conn)
-    {
-        if (conn->fd >= 0)
-        {
-            CLOSE_SOCKET(conn->fd);
-        }
-        free(conn->host);
-        free(conn);
-    }
+    // Delegate to connection pool - it will decide whether to pool or close
+    cwh_pool_return(conn);
 }
 
 // Helper: skip whitespace
