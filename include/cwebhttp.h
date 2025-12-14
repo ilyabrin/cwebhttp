@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h> // для malloc/free в примерах, но zero-alloc в core
+#include <time.h>   // for time_t in cookie expiration
 
 // Версия
 #define CWEBHTTP_VERSION "0.1.0"
