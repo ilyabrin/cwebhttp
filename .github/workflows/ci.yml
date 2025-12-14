@@ -114,7 +114,7 @@ jobs:
           name: macos-binaries
           path: build/
 
-  # Windows build and test with select backend
+  # Windows build and test with IOCP backend
   windows:
     runs-on: windows-latest
 
@@ -141,14 +141,14 @@ jobs:
         shell: msys2 {0}
         run: make test
 
-      - name: Run async event loop tests (select)
+      - name: Run async event loop tests (IOCP)
         shell: msys2 {0}
         run: make async-tests
 
-      - name: Verify select backend
+      - name: Verify IOCP backend
         shell: msys2 {0}
         run: |
-          ./build/tests/test_async_loop.exe | grep "select"
+          ./build/tests/test_async_loop.exe | grep "IOCP"
 
       - name: Verify binary sizes
         shell: msys2 {0}
@@ -209,6 +209,6 @@ jobs:
             echo "Platform Coverage:"
             echo "- Linux: epoll backend ✅"
             echo "- macOS: kqueue backend ✅"
-            echo "- Windows: select backend ✅"
+            echo "- Windows: IOCP backend ✅"
             echo "- Docker: epoll backend ✅"
           fi
