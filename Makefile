@@ -1,6 +1,7 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c11 -O2 -Iinclude -Itests
 SRCS = src/cwebhttp.c
+ASYNC_SRCS = src/async/loop.c src/async/epoll.c src/async/nonblock.c
 
 # OS detection
 ifeq ($(OS),Windows_NT)
@@ -35,6 +36,10 @@ test: build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT) build/test
 integration: build/tests/test_integration$(EXE_EXT)
 	@echo "Running integration tests (requires internet connection)..."
 	$(call RUN_TEST,test_integration)
+
+async-tests: build/tests/test_async_loop$(EXE_EXT)
+	@echo "Running async event loop tests..."
+	$(call RUN_TEST,test_async_loop)
 
 tests: test
 
@@ -82,6 +87,10 @@ build/benchmarks/minimal_example$(EXE_EXT): benchmarks/minimal_example.c $(SRCS)
 	@$(call MKDIR,build/benchmarks)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+build/tests/test_async_loop$(EXE_EXT): tests/test_async_loop.c tests/unity.c $(SRCS) $(ASYNC_SRCS)
+	@$(call MKDIR,build/tests)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
 clean:
 	@$(RM)
 
@@ -95,4 +104,4 @@ docker-test: docker-build
 docker-shell: docker-build
 	docker run --rm -it cwebhttp-test /bin/bash
 
-.PHONY: all examples benchmarks test tests integration clean docker-build docker-test docker-shell
+.PHONY: all examples benchmarks test tests integration async-tests clean docker-build docker-test docker-shell
