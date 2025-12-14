@@ -32,6 +32,10 @@ test: build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT) build/test
 	$(call RUN_TEST,test_url)
 	$(call RUN_TEST,test_chunked)
 
+integration: build/tests/test_integration$(EXE_EXT)
+	@echo "Running integration tests (requires internet connection)..."
+	$(call RUN_TEST,test_integration)
+
 tests: test
 
 build/examples/minimal_server$(EXE_EXT): examples/minimal_server.c $(SRCS)
@@ -62,6 +66,10 @@ build/tests/test_chunked$(EXE_EXT): tests/test_chunked.c tests/unity.c $(SRCS)
 	@$(call MKDIR,build/tests)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+build/tests/test_integration$(EXE_EXT): tests/test_integration.c tests/unity.c $(SRCS)
+	@$(call MKDIR,build/tests)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
 build/benchmarks/bench_parser$(EXE_EXT): benchmarks/bench_parser.c $(SRCS)
 	@$(call MKDIR,build/benchmarks)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
@@ -87,4 +95,4 @@ docker-test: docker-build
 docker-shell: docker-build
 	docker run --rm -it cwebhttp-test /bin/bash
 
-.PHONY: all examples benchmarks test tests clean docker-build docker-test docker-shell
+.PHONY: all examples benchmarks test tests integration clean docker-build docker-test docker-shell
