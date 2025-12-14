@@ -13,8 +13,9 @@
 #define USE_KQUEUE
 #include <sys/event.h>
 #elif defined(_WIN32) || defined(_WIN64)
-#define USE_IOCP
-#include <windows.h>
+// TODO: Implement IOCP, using select as fallback for now
+#define USE_SELECT
+#include <winsock2.h>
 #else
 #define USE_SELECT
 #include <sys/select.h>
@@ -33,6 +34,30 @@ int cwh_epoll_run(cwh_epoll_t *ep);
 void cwh_epoll_stop(cwh_epoll_t *ep);
 void cwh_epoll_free(cwh_epoll_t *ep);
 const char *cwh_epoll_backend(void);
+#elif defined(USE_KQUEUE)
+typedef struct cwh_kqueue cwh_kqueue_t;
+cwh_kqueue_t *cwh_kqueue_create(int max_events);
+void cwh_kqueue_set_loop(cwh_kqueue_t *kq, void *loop);
+int cwh_kqueue_add(cwh_kqueue_t *kq, int fd, int events, cwh_event_cb cb, void *data);
+int cwh_kqueue_mod(cwh_kqueue_t *kq, int fd, int events);
+int cwh_kqueue_del(cwh_kqueue_t *kq, int fd);
+int cwh_kqueue_wait(cwh_kqueue_t *kq, int timeout_ms);
+int cwh_kqueue_run(cwh_kqueue_t *kq);
+void cwh_kqueue_stop(cwh_kqueue_t *kq);
+void cwh_kqueue_free(cwh_kqueue_t *kq);
+const char *cwh_kqueue_backend(void);
+#elif defined(USE_SELECT)
+typedef struct cwh_select cwh_select_t;
+cwh_select_t *cwh_select_create(void);
+void cwh_select_set_loop(cwh_select_t *sel, void *loop);
+int cwh_select_add(cwh_select_t *sel, int fd, int events, cwh_event_cb cb, void *data);
+int cwh_select_mod(cwh_select_t *sel, int fd, int events);
+int cwh_select_del(cwh_select_t *sel, int fd);
+int cwh_select_wait(cwh_select_t *sel, int timeout_ms);
+int cwh_select_run(cwh_select_t *sel);
+void cwh_select_stop(cwh_select_t *sel);
+void cwh_select_free(cwh_select_t *sel);
+const char *cwh_select_backend(void);
 #endif
 
 // Event loop structure (opaque to users)
@@ -64,17 +89,24 @@ cwh_loop_t *cwh_loop_new(void)
         cwh_epoll_set_loop((cwh_epoll_t *)loop->backend, loop);
     }
 #elif defined(USE_KQUEUE)
-    // TODO: Implement kqueue backend
-    loop->backend = NULL;
+    loop->backend = cwh_kqueue_create(1024); // Default: 1024 max events
     loop->backend_type = BACKEND_KQUEUE;
+    if (loop->backend)
+    {
+        cwh_kqueue_set_loop((cwh_kqueue_t *)loop->backend, loop);
+    }
 #elif defined(USE_IOCP)
     // TODO: Implement IOCP backend
     loop->backend = NULL;
     loop->backend_type = BACKEND_IOCP;
 #else
-    // TODO: Implement select backend
-    loop->backend = NULL;
+    // Use select as fallback
+    loop->backend = cwh_select_create();
     loop->backend_type = BACKEND_SELECT;
+    if (loop->backend)
+    {
+        cwh_select_set_loop((cwh_select_t *)loop->backend, loop);
+    }
 #endif
 
     if (!loop->backend)
@@ -100,6 +132,16 @@ int cwh_loop_run(cwh_loop_t *loop)
     {
         return cwh_epoll_run((cwh_epoll_t *)loop->backend);
     }
+#elif defined(USE_KQUEUE)
+    if (loop->backend_type == BACKEND_KQUEUE)
+    {
+        return cwh_kqueue_run((cwh_kqueue_t *)loop->backend);
+    }
+#elif defined(USE_SELECT)
+    if (loop->backend_type == BACKEND_SELECT)
+    {
+        return cwh_select_run((cwh_select_t *)loop->backend);
+    }
 #endif
 
     return -1;
@@ -115,6 +157,16 @@ int cwh_loop_run_once(cwh_loop_t *loop, int timeout_ms)
     if (loop->backend_type == BACKEND_EPOLL)
     {
         return cwh_epoll_wait((cwh_epoll_t *)loop->backend, timeout_ms);
+    }
+#elif defined(USE_KQUEUE)
+    if (loop->backend_type == BACKEND_KQUEUE)
+    {
+        return cwh_kqueue_wait((cwh_kqueue_t *)loop->backend, timeout_ms);
+    }
+#elif defined(USE_SELECT)
+    if (loop->backend_type == BACKEND_SELECT)
+    {
+        return cwh_select_wait((cwh_select_t *)loop->backend, timeout_ms);
     }
 #endif
 
@@ -134,6 +186,16 @@ void cwh_loop_stop(cwh_loop_t *loop)
     {
         cwh_epoll_stop((cwh_epoll_t *)loop->backend);
     }
+#elif defined(USE_KQUEUE)
+    if (loop->backend_type == BACKEND_KQUEUE)
+    {
+        cwh_kqueue_stop((cwh_kqueue_t *)loop->backend);
+    }
+#elif defined(USE_SELECT)
+    if (loop->backend_type == BACKEND_SELECT)
+    {
+        cwh_select_stop((cwh_select_t *)loop->backend);
+    }
 #endif
 }
 
@@ -147,6 +209,16 @@ void cwh_loop_free(cwh_loop_t *loop)
     if (loop->backend_type == BACKEND_EPOLL && loop->backend)
     {
         cwh_epoll_free((cwh_epoll_t *)loop->backend);
+    }
+#elif defined(USE_KQUEUE)
+    if (loop->backend_type == BACKEND_KQUEUE && loop->backend)
+    {
+        cwh_kqueue_free((cwh_kqueue_t *)loop->backend);
+    }
+#elif defined(USE_SELECT)
+    if (loop->backend_type == BACKEND_SELECT && loop->backend)
+    {
+        cwh_select_free((cwh_select_t *)loop->backend);
     }
 #endif
 
@@ -164,6 +236,16 @@ int cwh_loop_add(cwh_loop_t *loop, int fd, int events, cwh_event_cb cb, void *da
     {
         return cwh_epoll_add((cwh_epoll_t *)loop->backend, fd, events, cb, data);
     }
+#elif defined(USE_KQUEUE)
+    if (loop->backend_type == BACKEND_KQUEUE)
+    {
+        return cwh_kqueue_add((cwh_kqueue_t *)loop->backend, fd, events, cb, data);
+    }
+#elif defined(USE_SELECT)
+    if (loop->backend_type == BACKEND_SELECT)
+    {
+        return cwh_select_add((cwh_select_t *)loop->backend, fd, events, cb, data);
+    }
 #endif
 
     return -1;
@@ -180,6 +262,16 @@ int cwh_loop_mod(cwh_loop_t *loop, int fd, int events)
     {
         return cwh_epoll_mod((cwh_epoll_t *)loop->backend, fd, events);
     }
+#elif defined(USE_KQUEUE)
+    if (loop->backend_type == BACKEND_KQUEUE)
+    {
+        return cwh_kqueue_mod((cwh_kqueue_t *)loop->backend, fd, events);
+    }
+#elif defined(USE_SELECT)
+    if (loop->backend_type == BACKEND_SELECT)
+    {
+        return cwh_select_mod((cwh_select_t *)loop->backend, fd, events);
+    }
 #endif
 
     return -1;
@@ -195,6 +287,16 @@ int cwh_loop_del(cwh_loop_t *loop, int fd)
     if (loop->backend_type == BACKEND_EPOLL)
     {
         return cwh_epoll_del((cwh_epoll_t *)loop->backend, fd);
+    }
+#elif defined(USE_KQUEUE)
+    if (loop->backend_type == BACKEND_KQUEUE)
+    {
+        return cwh_kqueue_del((cwh_kqueue_t *)loop->backend, fd);
+    }
+#elif defined(USE_SELECT)
+    if (loop->backend_type == BACKEND_SELECT)
+    {
+        return cwh_select_del((cwh_select_t *)loop->backend, fd);
     }
 #endif
 
@@ -215,7 +317,7 @@ const char *cwh_loop_backend(cwh_loop_t *loop)
 #elif defined(USE_KQUEUE)
     if (loop->backend_type == BACKEND_KQUEUE)
     {
-        return "kqueue (macOS/BSD)";
+        return cwh_kqueue_backend();
     }
 #elif defined(USE_IOCP)
     if (loop->backend_type == BACKEND_IOCP)
