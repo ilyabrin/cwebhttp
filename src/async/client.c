@@ -192,12 +192,32 @@ static int check_connect_complete(int fd)
 // Start async connection
 static int start_connect(cwh_async_request_t *req)
 {
-    // DNS resolution (blocking for now)
+    // Extract null-terminated hostname
+    // The URL parser uses zero-alloc pointers, so we need to copy the host
+    char hostname[256] = {0};
+    const char *host_start = req->parsed_url.host;
+    const char *host_end = host_start;
+
+    // Find end of hostname (before '/', '?', '#', ':', or null)
+    while (*host_end && *host_end != '/' && *host_end != '?' && *host_end != '#' && *host_end != ':')
+    {
+        host_end++;
+    }
+
+    size_t host_len = host_end - host_start;
+    if (host_len >= sizeof(hostname))
+        return -1;
+
+    memcpy(hostname, host_start, host_len);
+    hostname[host_len] = '\0';
+
+    // DNS resolution (blocking for now, async DNS planned for future)
+    if (resolve_host(hostname, &req->addr) < 0)
+        return -1;
+
+    // Set port AFTER resolve_host (which overwrites the whole struct)
     req->addr.sin_family = AF_INET;
     req->addr.sin_port = htons(req->parsed_url.port);
-
-    if (resolve_host(req->parsed_url.host, &req->addr) < 0)
-        return -1;
 
     // Create socket
     req->fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -222,7 +242,8 @@ static int start_connect(cwh_async_request_t *req)
     if (ret < 0)
     {
 #ifdef _WIN32
-        if (WSAGetLastError() == WSAEWOULDBLOCK || WSAGetLastError() == WSAEINPROGRESS)
+        int err = WSAGetLastError();
+        if (err == WSAEWOULDBLOCK || err == WSAEINPROGRESS)
         {
 #else
         if (errno == EINPROGRESS)
