@@ -28,6 +28,7 @@ typedef struct cwh_epoll
     int max_events;
     cwh_event_entry_t *handlers; // Linked list of event handlers
     int running;
+    void *loop_ptr; // Pointer back to cwh_loop_t for callbacks
 } cwh_epoll_t;
 
 // Create epoll instance
@@ -55,6 +56,7 @@ cwh_epoll_t *cwh_epoll_create(int max_events)
     ep->max_events = max_events;
     ep->handlers = NULL;
     ep->running = 0;
+    ep->loop_ptr = NULL; // Will be set by loop.c
 
     return ep;
 }
@@ -224,7 +226,7 @@ int cwh_epoll_wait(cwh_epoll_t *ep, int timeout_ms)
         if (entry && entry->callback)
         {
             int events = epoll_to_cwh_events(ep->events[i].events);
-            entry->callback((cwh_loop_t *)ep, fd, events, entry->data);
+            entry->callback((cwh_loop_t *)ep->loop_ptr, fd, events, entry->data);
         }
     }
 
@@ -281,6 +283,15 @@ void cwh_epoll_free(cwh_epoll_t *ep)
     // Free events array
     free(ep->events);
     free(ep);
+}
+
+// Set loop pointer (called by loop.c after creation)
+void cwh_epoll_set_loop(cwh_epoll_t *ep, void *loop)
+{
+    if (ep)
+    {
+        ep->loop_ptr = loop;
+    }
 }
 
 // Get backend name

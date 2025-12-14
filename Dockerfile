@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     zlib1g-dev \
     telnet \
     curl \
+    gdb \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -22,8 +23,8 @@ RUN make clean && make all
 # Run unit tests
 RUN make test
 
-# Build simple async test for debugging
-RUN gcc -Wall -Wextra -std=c11 -O2 -Iinclude tests/test_async_simple.c src/async/loop.c src/async/epoll.c src/async/nonblock.c -o build/tests/test_async_simple || true
+# Build and run async tests
+RUN make async-tests
 
-# Default command - run simple async test
-CMD ["/bin/bash", "-c", "echo 'Running simple async test...' && ./build/tests/test_async_simple 2>&1"]
+# Default command - run all tests including async
+CMD ["/bin/bash", "-c", "echo '=== Running all unit tests ===' && make test && echo '\n=== Running async event loop tests ===' && make async-tests"]

@@ -24,6 +24,7 @@
 #ifdef USE_EPOLL
 typedef struct cwh_epoll cwh_epoll_t;
 cwh_epoll_t *cwh_epoll_create(int max_events);
+void cwh_epoll_set_loop(cwh_epoll_t *ep, void *loop);
 int cwh_epoll_add(cwh_epoll_t *ep, int fd, int events, cwh_event_cb cb, void *data);
 int cwh_epoll_mod(cwh_epoll_t *ep, int fd, int events);
 int cwh_epoll_del(cwh_epoll_t *ep, int fd);
@@ -58,6 +59,10 @@ cwh_loop_t *cwh_loop_new(void)
 #ifdef USE_EPOLL
     loop->backend = cwh_epoll_create(1024); // Default: 1024 max events
     loop->backend_type = BACKEND_EPOLL;
+    if (loop->backend)
+    {
+        cwh_epoll_set_loop((cwh_epoll_t *)loop->backend, loop);
+    }
 #elif defined(USE_KQUEUE)
     // TODO: Implement kqueue backend
     loop->backend = NULL;
