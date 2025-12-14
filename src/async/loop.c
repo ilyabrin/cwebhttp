@@ -6,7 +6,15 @@
 #include <string.h>
 
 // Platform detection
-#if defined(__linux__)
+#if defined(FORCE_SELECT)
+// Force select backend (useful for testing or IOCP issues)
+#define USE_SELECT
+#ifdef _WIN32
+#include <winsock2.h>
+#else
+#include <sys/select.h>
+#endif
+#elif defined(__linux__)
 #define USE_EPOLL
 #include <sys/epoll.h>
 #elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
