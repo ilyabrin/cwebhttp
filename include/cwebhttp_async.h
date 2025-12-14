@@ -100,8 +100,11 @@ extern "C"
     // Opaque async server handle
     typedef struct cwh_async_server cwh_async_server_t;
 
+    // Opaque async connection handle
+    typedef struct cwh_async_conn cwh_async_conn_t;
+
     // Async request handler
-    typedef void (*cwh_async_handler_t)(cwh_request_t *req, cwh_response_t *res, void *data);
+    typedef void (*cwh_async_handler_t)(cwh_async_conn_t *conn, cwh_request_t *req, void *data);
 
     // Create async server
     cwh_async_server_t *cwh_async_server_new(cwh_loop_t *loop);
@@ -121,6 +124,21 @@ extern "C"
 
     // Free server
     void cwh_async_server_free(cwh_async_server_t *server);
+
+    // Response helpers
+    void cwh_async_send_response(cwh_async_conn_t *conn,
+                                 int status,
+                                 const char *content_type,
+                                 const char *body,
+                                 size_t body_len);
+
+    void cwh_async_send_status(cwh_async_conn_t *conn,
+                               int status,
+                               const char *message);
+
+    void cwh_async_send_json(cwh_async_conn_t *conn,
+                             int status,
+                             const char *json);
 
     // ============================================================================
     // Utilities
