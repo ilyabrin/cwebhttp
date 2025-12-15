@@ -1,4 +1,4 @@
-// Test DNS resolution and TCP connect
+// Test DNS resolution and connection
 #include <stdio.h>
 #include <string.h>
 
@@ -7,52 +7,74 @@
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
 #else
-#include <netdb.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 #include <arpa/inet.h>
+#include <netdb.h>
+#include <unistd.h>
 #endif
 
 int main(void)
 {
 #ifdef _WIN32
-    WSADATA wsaData;
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
-    {
-        fprintf(stderr, "Failed to initialize Winsock\n");
-        return 1;
-    }
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2, 2), &wsa);
 #endif
 
-    const char *host = "example.com";
-    const char *port = "80";
+    printf("Testing connection to localhost:8080...\n");
 
-    printf("Resolving %s:%s...\n", host, port);
-
-    struct addrinfo hints = {0};
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-
-    struct addrinfo *result = NULL;
-    int ret = getaddrinfo(host, port, &hints, &result);
-
-    if (ret != 0)
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0)
     {
-        printf("getaddrinfo failed: %d\n", ret);
+        printf("Failed to create socket\n");
         return 1;
     }
 
-    printf("DNS resolution successful\n");
+    struct sockaddr_in addr = {0};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(8080);
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
-    struct sockaddr_in *addr = (struct sockaddr_in *)result->ai_addr;
-    char ip_str[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &addr->sin_addr, ip_str, sizeof(ip_str));
-    printf("Resolved to: %s:%d\n", ip_str, ntohs(addr->sin_port));
+    printf("Attempting to connect...\n");
+    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+    {
+        printf("Connection failed\n");
+#ifdef _WIN32
+        printf("Error: %d\n", WSAGetLastError());
+        closesocket(sock);
+#else
+        perror("connect");
+        close(sock);
+#endif
+        return 1;
+    }
 
-    freeaddrinfo(result);
+    printf("Connected successfully!\n");
+
+    const char *request = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    printf("Sending request...\n");
+    send(sock, request, strlen(request), 0);
+
+    char buffer[1024] = {0};
+    printf("Waiting for response...\n");
+    int n = recv(sock, buffer, sizeof(buffer) - 1, 0);
+
+    if (n > 0)
+    {
+        buffer[n] = '\0';
+        printf("Received %d bytes:\n%s\n", n, buffer);
+    }
+    else
+    {
+        printf("No response received\n");
+    }
 
 #ifdef _WIN32
+    closesocket(sock);
     WSACleanup();
+#else
+    close(sock);
 #endif
 
-    printf("Test complete!\n");
     return 0;
 }
