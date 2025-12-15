@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-#include <stdio.h>
 
 #ifndef _WIN32
 #include <unistd.h>
@@ -103,8 +102,6 @@ int cwh_select_add(cwh_select_t *sel, int fd, int events, cwh_event_cb cb, void 
     if (fd > sel->max_fd)
         sel->max_fd = fd;
 
-    printf("[DEBUG] cwh_select_add: fd=%d, events=%d, max_fd=%d\n", fd, events, sel->max_fd);
-
     return 0;
 }
 
@@ -166,14 +163,9 @@ int cwh_select_wait(cwh_select_t *sel, int timeout_ms)
     if (!sel)
         return -1;
 
-    printf("[DEBUG] cwh_select_wait: max_fd=%d\n", sel->max_fd);
-
     // No handlers registered
     if (sel->max_fd < 0)
-    {
-        printf("[DEBUG] No handlers registered, returning\n");
         return 0;
-    }
 
     // Build fd_sets
     fd_set read_fds, write_fds, error_fds;
@@ -204,9 +196,7 @@ int cwh_select_wait(cwh_select_t *sel, int timeout_ms)
     }
 
     // Call select
-    printf("[DEBUG] Calling select() with max_fd=%d\n", sel->max_fd);
     int ret = select(sel->max_fd + 1, &read_fds, &write_fds, &error_fds, tv_ptr);
-    printf("[DEBUG] select() returned: %d\n", ret);
 
     if (ret < 0)
     {

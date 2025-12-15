@@ -451,7 +451,6 @@ static void listen_event_handler(cwh_loop_t *loop, int fd, int events, void *dat
     (void)events;
 
     cwh_async_server_t *server = (cwh_async_server_t *)data;
-    printf("[DEBUG] listen_event_handler called\n");
 
     // Accept multiple connections in a loop (batch accept)
     while (server->running && server->conn_count < server->max_connections)
@@ -462,8 +461,6 @@ static void listen_event_handler(cwh_loop_t *loop, int fd, int events, void *dat
         int client_fd = accept(server->listen_fd,
                                (struct sockaddr *)&client_addr,
                                &addr_len);
-
-        printf("[DEBUG] accept() returned: %d\n", client_fd);
 
         if (client_fd < 0)
         {
