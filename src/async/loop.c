@@ -21,9 +21,10 @@
 #define USE_KQUEUE
 #include <sys/event.h>
 #elif defined(_WIN32) || defined(_WIN64)
-#define USE_WSAPOLL
+#define USE_IOCP
 #include <winsock2.h>
-#include <ws2tcpip.h>
+#include <windows.h>
+#include <mswsock.h>
 #else
 #define USE_SELECT
 #include <sys/select.h>
@@ -78,6 +79,7 @@ int cwh_iocp_run(cwh_iocp_t *iocp);
 void cwh_iocp_stop(cwh_iocp_t *iocp);
 void cwh_iocp_free(cwh_iocp_t *iocp);
 const char *cwh_iocp_backend(void);
+int cwh_iocp_get_accepted_socket(cwh_iocp_t *iocp, int listen_fd);
 #elif defined(USE_SELECT)
 typedef struct cwh_select cwh_select_t;
 cwh_select_t *cwh_select_create(void);
@@ -425,4 +427,23 @@ const char *cwh_loop_backend(cwh_loop_t *loop)
 #endif
 
     return "unknown";
+}
+
+// Get accepted socket from listen socket (IOCP AcceptEx integration)
+// Returns accepted socket fd, or -1 if none available or not using IOCP
+// This function is used by the async server to retrieve sockets accepted by AcceptEx
+int cwh_loop_get_accepted_socket(cwh_loop_t *loop, int listen_fd)
+{
+    if (!loop || !loop->backend || listen_fd < 0)
+        return -1;
+
+#ifdef USE_IOCP
+    if (loop->backend_type == BACKEND_IOCP)
+    {
+        return cwh_iocp_get_accepted_socket((cwh_iocp_t *)loop->backend, listen_fd);
+    }
+#endif
+
+    // Other backends don't pre-accept sockets
+    return -1;
 }

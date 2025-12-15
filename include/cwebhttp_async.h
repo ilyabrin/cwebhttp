@@ -60,6 +60,11 @@ extern "C"
     // Get backend name (for debugging)
     const char *cwh_loop_backend(cwh_loop_t *loop);
 
+    // Get accepted socket from listen socket (IOCP AcceptEx integration)
+    // Returns accepted socket fd, or -1 if none available or not using IOCP
+    // Internal function used by async server
+    int cwh_loop_get_accepted_socket(cwh_loop_t *loop, int listen_fd);
+
     // ============================================================================
     // Async Client API
     // ============================================================================

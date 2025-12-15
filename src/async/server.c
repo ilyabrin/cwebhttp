@@ -446,7 +446,6 @@ static void close_connection(cwh_async_conn_t *conn)
 // Listen socket event handler (accept new connections)
 static void listen_event_handler(cwh_loop_t *loop, int fd, int events, void *data)
 {
-    (void)loop;
     (void)fd;
     (void)events;
 
@@ -457,21 +456,30 @@ static void listen_event_handler(cwh_loop_t *loop, int fd, int events, void *dat
     {
         struct sockaddr_in client_addr;
         socklen_t addr_len = sizeof(client_addr);
+        int client_fd = -1;
 
-        int client_fd = accept(server->listen_fd,
+        // Check if using IOCP backend with AcceptEx
+        // If so, retrieve the pre-accepted socket
+        client_fd = cwh_loop_get_accepted_socket(loop, server->listen_fd);
+
+        // If no IOCP socket available, use normal accept()
+        if (client_fd < 0)
+        {
+            client_fd = accept(server->listen_fd,
                                (struct sockaddr *)&client_addr,
                                &addr_len);
 
-        if (client_fd < 0)
-        {
+            if (client_fd < 0)
+            {
 #ifdef _WIN32
-            if (WSAGetLastError() == WSAEWOULDBLOCK)
-                break; // No more connections to accept
+                if (WSAGetLastError() == WSAEWOULDBLOCK)
+                    break; // No more connections to accept
 #else
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
-                break; // No more connections to accept
+                if (errno == EAGAIN || errno == EWOULDBLOCK)
+                    break; // No more connections to accept
 #endif
-            continue; // Error, try next
+                continue; // Error, try next
+            }
         }
 
         // Set non-blocking
