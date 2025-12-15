@@ -1,6 +1,11 @@
 // client.c - Async HTTP client implementation
 // Non-blocking HTTP requests using event loop
 
+#ifndef _WIN32
+#define _POSIX_C_SOURCE 200112L
+#define _GNU_SOURCE
+#endif
+
 #include "../../include/cwebhttp_async.h"
 #include "../../include/cwebhttp.h"
 #include <stdlib.h>
@@ -14,6 +19,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
+#include <strings.h>
 #else
 #include <winsock2.h>
 #include <ws2tcpip.h>

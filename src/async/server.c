@@ -1,6 +1,11 @@
 // server.c - Async HTTP Server Implementation
 // High-performance event-driven HTTP/1.1 server with C10K capability
 
+#ifndef _WIN32
+#define _POSIX_C_SOURCE 200112L
+#define _GNU_SOURCE
+#endif
+
 #include "../../include/cwebhttp_async.h"
 #include "../../include/cwebhttp.h"
 #include <stdio.h>
@@ -18,6 +23,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <strings.h>
 #endif
 
 // ============================================================================

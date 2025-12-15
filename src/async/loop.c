@@ -21,9 +21,9 @@
 #define USE_KQUEUE
 #include <sys/event.h>
 #elif defined(_WIN32) || defined(_WIN64)
-#define USE_IOCP
+#define USE_WSAPOLL
 #include <winsock2.h>
-#include <windows.h>
+#include <ws2tcpip.h>
 #else
 #define USE_SELECT
 #include <sys/select.h>
@@ -54,6 +54,18 @@ int cwh_kqueue_run(cwh_kqueue_t *kq);
 void cwh_kqueue_stop(cwh_kqueue_t *kq);
 void cwh_kqueue_free(cwh_kqueue_t *kq);
 const char *cwh_kqueue_backend(void);
+#elif defined(USE_WSAPOLL)
+typedef struct cwh_wsapoll cwh_wsapoll_t;
+cwh_wsapoll_t *cwh_wsapoll_create(void);
+void cwh_wsapoll_set_loop(cwh_wsapoll_t *poll, void *loop);
+int cwh_wsapoll_add(cwh_wsapoll_t *poll, int fd, int events, cwh_event_cb cb, void *data);
+int cwh_wsapoll_mod(cwh_wsapoll_t *poll, int fd, int events);
+int cwh_wsapoll_del(cwh_wsapoll_t *poll, int fd);
+int cwh_wsapoll_wait(cwh_wsapoll_t *poll, int timeout_ms);
+int cwh_wsapoll_run(cwh_wsapoll_t *poll);
+void cwh_wsapoll_stop(cwh_wsapoll_t *poll);
+void cwh_wsapoll_free(cwh_wsapoll_t *poll);
+const char *cwh_wsapoll_backend(void);
 #elif defined(USE_IOCP)
 typedef struct cwh_iocp cwh_iocp_t;
 cwh_iocp_t *cwh_iocp_create(void);
@@ -91,8 +103,9 @@ struct cwh_loop
 // Backend type constants
 #define BACKEND_EPOLL 1
 #define BACKEND_KQUEUE 2
-#define BACKEND_IOCP 3
-#define BACKEND_SELECT 4
+#define BACKEND_WSAPOLL 3
+#define BACKEND_IOCP 4
+#define BACKEND_SELECT 5
 
 // Create new event loop
 cwh_loop_t *cwh_loop_new(void)
@@ -114,6 +127,13 @@ cwh_loop_t *cwh_loop_new(void)
     if (loop->backend)
     {
         cwh_kqueue_set_loop((cwh_kqueue_t *)loop->backend, loop);
+    }
+#elif defined(USE_WSAPOLL)
+    loop->backend = cwh_wsapoll_create();
+    loop->backend_type = BACKEND_WSAPOLL;
+    if (loop->backend)
+    {
+        cwh_wsapoll_set_loop((cwh_wsapoll_t *)loop->backend, loop);
     }
 #elif defined(USE_IOCP)
     loop->backend = cwh_iocp_create();
@@ -159,6 +179,11 @@ int cwh_loop_run(cwh_loop_t *loop)
     if (loop->backend_type == BACKEND_KQUEUE)
     {
         return cwh_kqueue_run((cwh_kqueue_t *)loop->backend);
+    }
+#elif defined(USE_WSAPOLL)
+    if (loop->backend_type == BACKEND_WSAPOLL)
+    {
+        return cwh_wsapoll_run((cwh_wsapoll_t *)loop->backend);
     }
 #elif defined(USE_IOCP)
     if (loop->backend_type == BACKEND_IOCP)
@@ -284,6 +309,11 @@ int cwh_loop_add(cwh_loop_t *loop, int fd, int events, cwh_event_cb cb, void *da
     {
         return cwh_kqueue_add((cwh_kqueue_t *)loop->backend, fd, events, cb, data);
     }
+#elif defined(USE_WSAPOLL)
+    if (loop->backend_type == BACKEND_WSAPOLL)
+    {
+        return cwh_wsapoll_add((cwh_wsapoll_t *)loop->backend, fd, events, cb, data);
+    }
 #elif defined(USE_IOCP)
     if (loop->backend_type == BACKEND_IOCP)
     {
@@ -376,6 +406,11 @@ const char *cwh_loop_backend(cwh_loop_t *loop)
     if (loop->backend_type == BACKEND_KQUEUE)
     {
         return cwh_kqueue_backend();
+    }
+#elif defined(USE_WSAPOLL)
+    if (loop->backend_type == BACKEND_WSAPOLL)
+    {
+        return "WSAPoll (Windows)";
     }
 #elif defined(USE_IOCP)
     if (loop->backend_type == BACKEND_IOCP)

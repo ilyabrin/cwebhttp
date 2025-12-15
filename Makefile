@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c11 -O2 -Iinclude -Itests
 SRCS = src/cwebhttp.c
-ASYNC_SRCS = src/async/loop.c src/async/epoll.c src/async/kqueue.c src/async/iocp.c src/async/select.c src/async/nonblock.c src/async/client.c src/async/server.c
+ASYNC_SRCS = src/async/loop.c src/async/epoll.c src/async/kqueue.c src/async/iocp.c src/async/wsapoll.c src/async/select.c src/async/nonblock.c src/async/client.c src/async/server.c
 
 # OS detection
 ifeq ($(OS),Windows_NT)

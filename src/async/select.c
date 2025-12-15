@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <stdio.h>
 
 #ifndef _WIN32
 #include <unistd.h>
@@ -29,8 +30,8 @@ typedef struct cwh_select
 {
     cwh_event_entry_t *handlers; // Linked list of event handlers
     int max_fd;                  // Highest file descriptor
-    int running;
-    void *loop_ptr; // Pointer back to cwh_loop_t for callbacks
+    int running;                 // Loop running flag
+    void *loop_ptr;              // Pointer back to cwh_loop_t for callbacks
 } cwh_select_t;
 
 // Create select instance

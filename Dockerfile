@@ -26,5 +26,8 @@ RUN make test
 # Build and run async tests
 RUN make async-tests
 
-# Default command - run all tests including async
-CMD ["/bin/bash", "-c", "echo '=== Running all unit tests ===' && make test && echo '\n=== Running async event loop tests ===' && make async-tests"]
+# Make test script executable
+RUN chmod +x test_async_server_docker.sh
+
+# Default command - run async server tests
+CMD ["/bin/bash", "./test_async_server_docker.sh"]
