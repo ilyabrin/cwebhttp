@@ -12,6 +12,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
+#include <time.h>
 
 #ifndef _WIN32
 #include <unistd.h>

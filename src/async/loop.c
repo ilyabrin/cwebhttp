@@ -80,6 +80,7 @@ void cwh_iocp_stop(cwh_iocp_t *iocp);
 void cwh_iocp_free(cwh_iocp_t *iocp);
 const char *cwh_iocp_backend(void);
 int cwh_iocp_get_accepted_socket(cwh_iocp_t *iocp, int listen_fd);
+int cwh_iocp_get_received_data(cwh_iocp_t *iocp, int fd, char *buffer, int size);
 #elif defined(USE_SELECT)
 typedef struct cwh_select cwh_select_t;
 cwh_select_t *cwh_select_create(void);

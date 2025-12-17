@@ -490,8 +490,6 @@ static void check_and_close_idle_connections(cwh_async_server_t *server)
 // Listen socket event handler (accept new connections)
 static void listen_event_handler(cwh_loop_t *loop, int fd, int events, void *data)
 {
-    (void)fd;
-
     printf("[SERVER] listen_event_handler called! fd=%d events=%d\n", fd, events);
 
     cwh_async_server_t *server = (cwh_async_server_t *)data;
