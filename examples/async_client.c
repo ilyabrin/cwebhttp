@@ -107,6 +107,7 @@ void example_concurrent_requests(cwh_loop_t *loop)
 // POST callback
 void on_post_response(cwh_response_t *res, cwh_error_t err, void *data)
 {
+    (void)data;
     printf("\n========================================\n");
     printf("POST Response\n");
     printf("========================================\n");

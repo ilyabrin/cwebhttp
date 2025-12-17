@@ -99,6 +99,24 @@ extern "C"
                            void *data);
 
     // ============================================================================
+    // Connection Pool Management
+    // ============================================================================
+
+    // Initialize connection pool with custom settings
+    // max_connections: Maximum number of pooled connections (default: 50)
+    // idle_timeout_sec: Seconds before idle connections are closed (default: 300)
+    void cwh_async_pool_init(int max_connections, int idle_timeout_sec);
+
+    // Get connection pool statistics
+    void cwh_async_pool_stats(int *active_count, int *total_count);
+
+    // Cleanup expired connections from pool
+    void cwh_async_pool_cleanup(void);
+
+    // Shutdown and free connection pool
+    void cwh_async_pool_shutdown(void);
+
+    // ============================================================================
     // Async Server API
     // ============================================================================
 

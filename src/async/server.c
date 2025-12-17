@@ -510,8 +510,6 @@ static void listen_event_handler(cwh_loop_t *loop, int fd, int events, void *dat
         // If so, retrieve the pre-accepted socket
         client_fd = cwh_loop_get_accepted_socket(loop, server->listen_fd);
 
-        printf("[SERVER] AcceptEx returned client_fd=%d\n", client_fd);
-
         // If no IOCP socket available, use normal accept()
         if (client_fd < 0)
         {
@@ -547,7 +545,6 @@ static void listen_event_handler(cwh_loop_t *loop, int fd, int events, void *dat
         cwh_async_conn_t *conn = create_connection(server, client_fd);
         if (!conn)
         {
-            printf("[SERVER] ERROR: Failed to create connection for fd=%d\n", client_fd);
 #ifdef _WIN32
             closesocket(client_fd);
 #else
@@ -556,13 +553,10 @@ static void listen_event_handler(cwh_loop_t *loop, int fd, int events, void *dat
             continue;
         }
 
-        printf("[SERVER] Connection created for fd=%d\n", client_fd);
-
         // Register for READ events
         if (cwh_loop_add(server->loop, client_fd, CWH_EVENT_READ,
                          connection_event_handler, conn) < 0)
         {
-            printf("[SERVER] ERROR: Failed to register fd=%d for READ events\n", client_fd);
             close_connection(conn);
             continue;
         }
