@@ -40,6 +40,7 @@ typedef struct cwh_event_entry
     int accept_pending;
     int is_listen_socket; // Flag to identify listen sockets
     HANDLE iocp_handle;   // Back-reference to IOCP handle for AcceptEx
+    DWORD bytes_received; // Bytes received in last read completion (IOCP only)
 } cwh_event_entry_t;
 
 // IOCP-based event loop
@@ -139,16 +140,23 @@ static SOCKET retrieve_accepted_socket(cwh_iocp_t *iocp, int listen_fd)
 // Post an AcceptEx operation for a listen socket
 static int post_acceptex(cwh_event_entry_t *entry)
 {
+    printf("[IOCP] post_acceptex: entry=%p, is_listen=%d, pending=%d\n",
+           entry, entry ? entry->is_listen_socket : -1, entry ? entry->accept_pending : -1);
+
     if (!entry || !entry->is_listen_socket || entry->accept_pending)
     {
+        printf("[IOCP] post_acceptex: Early return - invalid conditions\n");
         return -1;
     }
 
     // Check if AcceptEx is loaded
     if (!AcceptExPtr)
     {
+        printf("[IOCP] post_acceptex: ERROR - AcceptExPtr is NULL!\n");
         return -1;
     }
+
+    printf("[IOCP] post_acceptex: AcceptExPtr loaded, proceeding...\n");
 
     // Create accept socket if needed
     if (entry->accept_socket == INVALID_SOCKET)
@@ -159,63 +167,91 @@ static int post_acceptex(cwh_event_entry_t *entry)
         if (getsockopt((SOCKET)entry->fd, SOL_SOCKET, SO_PROTOCOL_INFO,
                        (char *)&protocol_info, &len) != 0)
         {
-            // Fallback: create AF_INET TCP socket
-            entry->accept_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+            // Fallback: create AF_INET TCP socket with WSA_FLAG_OVERLAPPED
+            entry->accept_socket = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP,
+                                             NULL, 0, WSA_FLAG_OVERLAPPED);
         }
         else
         {
-            entry->accept_socket = socket(protocol_info.iAddressFamily,
-                                          protocol_info.iSocketType,
-                                          protocol_info.iProtocol);
+            // Create socket with overlapped flag (critical for IOCP)
+            entry->accept_socket = WSASocket(protocol_info.iAddressFamily,
+                                             protocol_info.iSocketType,
+                                             protocol_info.iProtocol,
+                                             NULL, 0, WSA_FLAG_OVERLAPPED);
         }
 
         if (entry->accept_socket == INVALID_SOCKET)
             return -1;
 
-        // CRITICAL: Associate the accept socket with IOCP (required for AcceptEx to work!)
-        // Use the same completion key as the listen socket (entry pointer)
-        HANDLE result = CreateIoCompletionPort((HANDLE)entry->accept_socket,
-                                               entry->iocp_handle,
-                                               (ULONG_PTR)entry,
-                                               0);
-        if (!result)
-        {
-            closesocket(entry->accept_socket);
-            entry->accept_socket = INVALID_SOCKET;
-            return -1;
-        }
+        // DO NOT associate the accept socket here!
+        // AcceptEx completions will be delivered to the LISTEN socket's completion port
+        // The accept socket will be associated later when the connection is created
+        printf("[IOCP] Accept socket created: %d (will be associated later)\n",
+               (int)entry->accept_socket);
     }
 
-    // Reset overlapped structure
+    // Reset overlapped structure completely
     memset(&entry->accept_overlapped, 0, sizeof(OVERLAPPED));
 
-    // Buffer size for local and remote addresses (must be sizeof(sockaddr_in) + 16)
+    // AcceptEx requires buffer space for:
+    // - dwReceiveDataLength bytes for initial data (we use 0 for immediate completion)
+    // - dwLocalAddressLength bytes for local address + padding
+    // - dwRemoteAddressLength bytes for remote address + padding
+    //
+    // Microsoft docs: "The address data is written in an internal format.
+    // To convert the sockaddr structures, use GetAcceptExSockaddrs."
+    // Each address needs sizeof(sockaddr_in) + 16 bytes minimum
     DWORD addr_len = sizeof(struct sockaddr_in) + 16;
 
-    // Calculate receive buffer size
-    // We allocate addr_len*2 for addresses, leaving the rest for optional initial data
-    // Using a non-zero receive size allows AcceptEx to complete immediately when
-    // connection is established (otherwise it waits for client to send data first)
-    DWORD receive_size = sizeof(entry->accept_buffer) - (addr_len * 2);
+    // CRITICAL FIX: Use 0 for dwReceiveDataLength to make AcceptEx complete
+    // immediately upon connection (not wait for client data).
+    // The buffer still needs space for both addresses.
+    DWORD receive_size = 0;
 
-    // Post AcceptEx
+    // Post AcceptEx operation
+    DWORD bytes_received = 0;
+
+    printf("[IOCP] Calling AcceptEx: listen_fd=%d, accept_socket=%d\n",
+           (int)entry->fd, (int)entry->accept_socket);
+
     BOOL ret = AcceptExPtr((SOCKET)entry->fd,
                            entry->accept_socket,
                            entry->accept_buffer,
-                           receive_size, // Allow receiving initial data for immediate completion
-                           addr_len,
-                           addr_len,
-                           NULL,
+                           receive_size, // 0 = complete on connection, don't wait for data
+                           addr_len,     // Local address + 16 bytes
+                           addr_len,     // Remote address + 16 bytes
+                           &bytes_received,
                            &entry->accept_overlapped);
 
     DWORD error = WSAGetLastError();
 
+    printf("[IOCP] AcceptEx returned: ret=%d, error=%lu, bytes=%lu\n",
+           ret, error, bytes_received);
+
+    // AcceptEx returns FALSE with WSA_IO_PENDING for async operation
+    // or TRUE if it completed synchronously
     if (!ret && error != WSA_IO_PENDING)
     {
         // AcceptEx failed
         closesocket(entry->accept_socket);
         entry->accept_socket = INVALID_SOCKET;
         return -1;
+    }
+
+    // If AcceptEx completed synchronously (ret == TRUE), we still need to
+    // post a completion to IOCP manually or handle it here
+    if (ret)
+    {
+        printf("[IOCP] AcceptEx completed SYNCHRONOUSLY, posting completion manually\n");
+        // Synchronous completion - post completion packet manually
+        PostQueuedCompletionStatus(entry->iocp_handle,
+                                   bytes_received,
+                                   (ULONG_PTR)entry,
+                                   &entry->accept_overlapped);
+    }
+    else if (error == WSA_IO_PENDING)
+    {
+        printf("[IOCP] AcceptEx pending (async), waiting for completion...\n");
     }
 
     entry->accept_pending = 1;
@@ -271,13 +307,22 @@ int cwh_iocp_add(cwh_iocp_t *iocp, int fd, int events, cwh_event_cb cb, void *da
     }
 
     // Associate socket with IOCP
-    // Use entry pointer as completion key so we can find it later
-    HANDLE result = CreateIoCompletionPort((HANDLE)fd, iocp->iocp_handle, (ULONG_PTR)entry, 0);
+    // CRITICAL: For AcceptEx to work with MinGW, we MUST associate the listen socket!
+    // For AcceptEx'd client sockets, CreateIoCompletionPort will UPDATE the completion key
+    // from the listen socket's key to this new entry's key
+    printf("[IOCP] Associating socket fd=%d (is_listen=%d) with IOCP handle=%p, key=%p\n",
+           fd, entry->is_listen_socket, iocp->iocp_handle, entry);
+
+    HANDLE result = CreateIoCompletionPort((HANDLE)(uintptr_t)fd, iocp->iocp_handle, (ULONG_PTR)entry, 0);
     if (!result)
     {
+        DWORD err = GetLastError();
+        printf("[IOCP] ERROR: Failed to associate socket with IOCP, error=%lu\n", err);
         free(entry);
         return -1;
     }
+
+    printf("[IOCP] Socket fd=%d successfully associated/re-associated with IOCP (result=%p)\n", fd, result);
 
     // Add to handler list
     entry->next = iocp->handlers;
@@ -285,19 +330,26 @@ int cwh_iocp_add(cwh_iocp_t *iocp, int fd, int events, cwh_event_cb cb, void *da
 
     // For IOCP, we need to start async operations immediately
     // This is different from epoll/kqueue which are readiness-based
+    printf("[IOCP] cwh_iocp_add: fd=%d, events=%d, is_listen=%d\n", fd, events, entry->is_listen_socket);
+
     if (events & CWH_EVENT_READ)
     {
         if (entry->is_listen_socket)
         {
+            printf("[IOCP] Detected listen socket, calling post_acceptex...\n");
             // Post AcceptEx for listen sockets
-            if (post_acceptex(entry) != 0)
+            int ret = post_acceptex(entry);
+            printf("[IOCP] post_acceptex returned: %d\n", ret);
+            if (ret != 0)
             {
+                printf("[IOCP] WARNING: post_acceptex failed!\n");
                 // Failed to post accept, but don't fail the add operation
                 // The socket is still registered with IOCP
             }
         }
         else
         {
+            printf("[IOCP] Client socket, posting initial read operation...\n");
             // Post a read operation for client sockets
             WSABUF buf;
             buf.buf = entry->read_buffer;
@@ -306,12 +358,21 @@ int cwh_iocp_add(cwh_iocp_t *iocp, int fd, int events, cwh_event_cb cb, void *da
             DWORD flags = 0;
             DWORD bytes_received = 0;
 
+            memset(&entry->read_overlapped, 0, sizeof(OVERLAPPED));
+
             int ret = WSARecv((SOCKET)fd, &buf, 1, &bytes_received, &flags,
                               &entry->read_overlapped, NULL);
 
             if (ret == 0 || WSAGetLastError() == WSA_IO_PENDING)
             {
                 entry->read_pending = 1;
+                printf("[IOCP] Initial read posted successfully (ret=%d, error=%lu)\n",
+                       ret, WSAGetLastError());
+            }
+            else
+            {
+                printf("[IOCP] WARNING: Failed to post initial read (error=%lu)\n",
+                       WSAGetLastError());
             }
         }
     }
@@ -334,6 +395,8 @@ int cwh_iocp_mod(cwh_iocp_t *iocp, int fd, int events)
     int old_events = entry->events;
     entry->events = events;
 
+    printf("[IOCP] cwh_iocp_mod: fd=%d, old_events=%d, new_events=%d\n", fd, old_events, events);
+
     // Start read if needed and not already pending
     if ((events & CWH_EVENT_READ) && !entry->read_pending)
     {
@@ -350,6 +413,22 @@ int cwh_iocp_mod(cwh_iocp_t *iocp, int fd, int events)
         if (ret == 0 || WSAGetLastError() == WSA_IO_PENDING)
         {
             entry->read_pending = 1;
+        }
+    }
+
+    // Start write if needed and not already pending
+    if ((events & CWH_EVENT_WRITE) && !entry->write_pending)
+    {
+        printf("[IOCP] WRITE event requested, triggering immediate callback\n");
+
+        // For IOCP write, we immediately call the callback which will call write_response()
+        // write_response() will then post WSASend
+        // This is different from read where we pre-post the operation
+
+        // Immediately trigger WRITE event by calling the callback
+        if (entry->callback)
+        {
+            entry->callback((cwh_loop_t *)iocp->loop_ptr, fd, CWH_EVENT_WRITE, entry->data);
         }
     }
 
@@ -370,7 +449,7 @@ int cwh_iocp_del(cwh_iocp_t *iocp, int fd)
         if (curr->fd == fd)
         {
             // Cancel any pending I/O
-            CancelIo((HANDLE)fd);
+            CancelIo((HANDLE)(uintptr_t)fd);
 
             if (prev)
             {
@@ -401,12 +480,17 @@ int cwh_iocp_wait(cwh_iocp_t *iocp, int timeout_ms)
     LPOVERLAPPED overlapped = NULL;
 
     // Wait for completion
+    printf("[IOCP] Calling GetQueuedCompletionStatus (timeout=%d)...\n", timeout_ms);
+
     BOOL result = GetQueuedCompletionStatus(
         iocp->iocp_handle,
         &bytes_transferred,
         &completion_key,
         &overlapped,
         timeout_ms >= 0 ? timeout_ms : INFINITE);
+
+    printf("[IOCP] GetQueuedCompletionStatus returned: result=%d, bytes=%lu, key=%p, overlapped=%p\n",
+           result, bytes_transferred, (void *)completion_key, overlapped);
 
     if (!result && overlapped == NULL)
     {
@@ -473,6 +557,10 @@ int cwh_iocp_wait(cwh_iocp_t *iocp, int timeout_ms)
 
         if (result)
         {
+            // Store how many bytes were received
+            entry->bytes_received = bytes_transferred;
+            printf("[IOCP] Read completion: %lu bytes received\n", bytes_transferred);
+
             events |= CWH_EVENT_READ;
 
             // Re-post read if still interested
@@ -551,6 +639,36 @@ int cwh_iocp_run(cwh_iocp_t *iocp)
     return 0;
 }
 
+// Get buffered received data (IOCP already read it via WSARecv)
+int cwh_iocp_get_received_data(cwh_iocp_t *iocp, int fd, char *buffer, int size)
+{
+    if (!iocp || fd < 0 || !buffer || size <= 0)
+        return 0;
+
+    cwh_event_entry_t *entry = find_handler(iocp, fd);
+    if (!entry)
+        return 0;
+
+    // Check if there's buffered data from last read completion
+    if (entry->bytes_received > 0 && entry->bytes_received <= sizeof(entry->read_buffer))
+    {
+        int copy_size = (int)entry->bytes_received;
+        if (copy_size > size)
+            copy_size = size;
+
+        memcpy(buffer, entry->read_buffer, copy_size);
+
+        printf("[IOCP] Returning %d buffered bytes to application\n", copy_size);
+
+        // Clear the buffered data
+        entry->bytes_received = 0;
+
+        return copy_size;
+    }
+
+    return 0;
+}
+
 // Cleanup IOCP
 void cwh_iocp_free(cwh_iocp_t *iocp)
 {
@@ -564,7 +682,7 @@ void cwh_iocp_free(cwh_iocp_t *iocp)
         cwh_event_entry_t *next = curr->next;
 
         // Cancel any pending I/O
-        CancelIo((HANDLE)curr->fd);
+        CancelIo((HANDLE)(uintptr_t)curr->fd);
 
         free(curr);
         curr = next;

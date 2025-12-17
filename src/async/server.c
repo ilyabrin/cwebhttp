@@ -119,6 +119,7 @@ static int read_request(cwh_async_conn_t *conn);
 static int write_response(cwh_async_conn_t *conn);
 static void process_request(cwh_async_conn_t *conn);
 static cwh_async_route_t *find_route(cwh_async_server_t *server, cwh_method_t method, const char *path);
+static void check_and_close_idle_connections(cwh_async_server_t *server);
 
 // ============================================================================
 // Server Lifecycle
@@ -154,8 +155,13 @@ int cwh_async_listen(cwh_async_server_t *server, int port)
     if (!server || port <= 0 || port > 65535)
         return -1;
 
-    // Create listening socket
+    // Create listening socket with overlapped I/O flag on Windows (required for IOCP)
+#ifdef _WIN32
+    server->listen_fd = WSASocket(AF_INET, SOCK_STREAM, IPPROTO_TCP,
+                                  NULL, 0, WSA_FLAG_OVERLAPPED);
+#else
     server->listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+#endif
     if (server->listen_fd < 0)
         return -1;
 
@@ -193,7 +199,7 @@ int cwh_async_listen(cwh_async_server_t *server, int port)
     // Bind to port
     struct sockaddr_in addr = {0};
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY); // Fix: use htonl for INADDR_ANY
     addr.sin_port = htons(port);
 
     if (bind(server->listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
@@ -392,7 +398,7 @@ static cwh_async_conn_t *create_connection(cwh_async_server_t *server, int clien
     conn->send_len = 0;
     conn->send_offset = 0;
     conn->last_activity = time(NULL);
-    conn->timeout_ms = 30000; // 30 seconds
+    conn->timeout_ms = 10000; // 10 seconds idle timeout
     conn->keep_alive = false;
     conn->requests_served = 0;
 
@@ -440,6 +446,44 @@ static void close_connection(cwh_async_conn_t *conn)
 }
 
 // ============================================================================
+// Timeout Management
+// ============================================================================
+
+// Check and close idle connections (10-second timeout)
+static void check_and_close_idle_connections(cwh_async_server_t *server)
+{
+    if (!server || !server->connections)
+        return;
+
+    time_t now = time(NULL);
+    cwh_async_conn_t *conn = server->connections;
+    cwh_async_conn_t *prev = NULL;
+
+    while (conn)
+    {
+        cwh_async_conn_t *next = conn->next;
+        if ((now - conn->last_activity) * 1000 > conn->timeout_ms)
+        {
+            // Idle timeout exceeded, close connection
+            close_connection(conn);
+            // After close_connection, conn is freed, so update prev->next or server->connections
+            if (prev)
+            {
+                prev->next = next;
+            }
+            else
+            {
+                server->connections = next;
+            }
+            conn = next;
+            continue;
+        }
+        prev = conn;
+        conn = next;
+    }
+}
+
+// ============================================================================
 // Event Handlers
 // ============================================================================
 
@@ -447,9 +491,13 @@ static void close_connection(cwh_async_conn_t *conn)
 static void listen_event_handler(cwh_loop_t *loop, int fd, int events, void *data)
 {
     (void)fd;
-    (void)events;
+
+    printf("[SERVER] listen_event_handler called! fd=%d events=%d\n", fd, events);
 
     cwh_async_server_t *server = (cwh_async_server_t *)data;
+
+    // Periodically check and close idle connections
+    check_and_close_idle_connections(server);
 
     // Accept multiple connections in a loop (batch accept)
     while (server->running && server->conn_count < server->max_connections)
@@ -461,6 +509,8 @@ static void listen_event_handler(cwh_loop_t *loop, int fd, int events, void *dat
         // Check if using IOCP backend with AcceptEx
         // If so, retrieve the pre-accepted socket
         client_fd = cwh_loop_get_accepted_socket(loop, server->listen_fd);
+
+        printf("[SERVER] AcceptEx returned client_fd=%d\n", client_fd);
 
         // If no IOCP socket available, use normal accept()
         if (client_fd < 0)
@@ -497,6 +547,7 @@ static void listen_event_handler(cwh_loop_t *loop, int fd, int events, void *dat
         cwh_async_conn_t *conn = create_connection(server, client_fd);
         if (!conn)
         {
+            printf("[SERVER] ERROR: Failed to create connection for fd=%d\n", client_fd);
 #ifdef _WIN32
             closesocket(client_fd);
 #else
@@ -505,10 +556,13 @@ static void listen_event_handler(cwh_loop_t *loop, int fd, int events, void *dat
             continue;
         }
 
+        printf("[SERVER] Connection created for fd=%d\n", client_fd);
+
         // Register for READ events
         if (cwh_loop_add(server->loop, client_fd, CWH_EVENT_READ,
                          connection_event_handler, conn) < 0)
         {
+            printf("[SERVER] ERROR: Failed to register fd=%d for READ events\n", client_fd);
             close_connection(conn);
             continue;
         }
@@ -519,7 +573,8 @@ static void listen_event_handler(cwh_loop_t *loop, int fd, int events, void *dat
 static void connection_event_handler(cwh_loop_t *loop, int fd, int events, void *data)
 {
     (void)loop;
-    (void)fd;
+
+    printf("[SERVER] connection_event_handler: fd=%d events=%d\n", fd, events);
 
     cwh_async_conn_t *conn = (cwh_async_conn_t *)data;
 
@@ -534,20 +589,28 @@ static void connection_event_handler(cwh_loop_t *loop, int fd, int events, void 
     }
 
     // State machine
+    printf("[SERVER] Connection state: %d\n", conn->state);
+
     switch (conn->state)
     {
     case CONN_STATE_READING_REQUEST:
         if (events & CWH_EVENT_READ)
         {
+            printf("[SERVER] READ event, calling read_request...\n");
             int result = read_request(conn);
+            printf("[SERVER] read_request returned: %d, request_complete=%d\n",
+                   result, conn->request_complete);
+
             if (result < 0)
             {
+                printf("[SERVER] ERROR: read_request failed\n");
                 close_connection(conn);
                 return;
             }
 
             if (conn->request_complete)
             {
+                printf("[SERVER] Request complete, processing...\n");
                 conn->state = CONN_STATE_PROCESSING;
                 process_request(conn);
             }
@@ -600,10 +663,27 @@ static void connection_event_handler(cwh_loop_t *loop, int fd, int events, void 
 // Read request data (non-blocking)
 static int read_request(cwh_async_conn_t *conn)
 {
-    ssize_t n = recv(conn->fd,
-                     conn->recv_buf + conn->recv_len,
-                     sizeof(conn->recv_buf) - conn->recv_len - 1,
-                     0);
+    ssize_t n;
+
+#ifdef _WIN32
+    // On Windows with IOCP, check if there's buffered data first
+    // The data was already received by WSARecv into the IOCP buffer
+    int iocp_bytes = cwh_loop_get_iocp_data(conn->server->loop, conn->fd,
+                                            conn->recv_buf + conn->recv_len,
+                                            sizeof(conn->recv_buf) - conn->recv_len - 1);
+    if (iocp_bytes > 0)
+    {
+        printf("[SERVER] Using %d bytes from IOCP buffer\n", iocp_bytes);
+        n = iocp_bytes;
+    }
+    else
+#endif
+    {
+        n = recv(conn->fd,
+                 conn->recv_buf + conn->recv_len,
+                 sizeof(conn->recv_buf) - conn->recv_len - 1,
+                 0);
+    }
 
     if (n > 0)
     {

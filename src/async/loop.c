@@ -447,3 +447,21 @@ int cwh_loop_get_accepted_socket(cwh_loop_t *loop, int listen_fd)
     // Other backends don't pre-accept sockets
     return -1;
 }
+
+// Get IOCP buffered data (Windows only)
+// Returns number of bytes copied, or 0 if no buffered data
+int cwh_loop_get_iocp_data(cwh_loop_t *loop, int fd, char *buffer, int size)
+{
+    if (!loop || !loop->backend || fd < 0 || !buffer || size <= 0)
+        return 0;
+
+#ifdef USE_IOCP
+    if (loop->backend_type == BACKEND_IOCP)
+    {
+        return cwh_iocp_get_received_data((cwh_iocp_t *)loop->backend, fd, buffer, size);
+    }
+#endif
+
+    // Other backends don't buffer data
+    return 0;
+}
