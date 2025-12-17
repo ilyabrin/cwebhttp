@@ -24,9 +24,9 @@ endif
 
 all: examples build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT) build/tests/test_chunked$(EXE_EXT)
 
-examples: build/examples/minimal_server$(EXE_EXT) build/examples/simple_client$(EXE_EXT) build/examples/hello_server$(EXE_EXT) build/examples/file_server$(EXE_EXT) build/examples/async_client$(EXE_EXT) build/examples/async_server$(EXE_EXT)
+examples: build/examples/minimal_server$(EXE_EXT) build/examples/simple_client$(EXE_EXT) build/examples/hello_server$(EXE_EXT) build/examples/file_server$(EXE_EXT) build/examples/async_client$(EXE_EXT) build/examples/async_server$(EXE_EXT) build/examples/async_client_pool$(EXE_EXT)
 
-benchmarks: build/benchmarks/bench_parser$(EXE_EXT) build/benchmarks/bench_memory$(EXE_EXT) build/benchmarks/minimal_example$(EXE_EXT)
+benchmarks: build/benchmarks/bench_parser$(EXE_EXT) build/benchmarks/bench_memory$(EXE_EXT) build/benchmarks/minimal_example$(EXE_EXT) build/benchmarks/bench_c10k$(EXE_EXT) build/benchmarks/bench_latency$(EXE_EXT) build/benchmarks/bench_async_throughput$(EXE_EXT)
 
 test: build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT) build/tests/test_chunked$(EXE_EXT)
 	$(call RUN_TEST,test_parse)
@@ -40,6 +40,10 @@ integration: build/tests/test_integration$(EXE_EXT)
 async-tests: build/tests/test_async_loop$(EXE_EXT)
 	@echo "Running async event loop tests..."
 	$(call RUN_TEST,test_async_loop)
+
+test-iocp: build/test_iocp_server$(EXE_EXT)
+	@echo "Running IOCP server test (Windows only)..."
+	.\build\test_iocp_server$(EXE_EXT)
 
 tests: test
 
@@ -87,6 +91,18 @@ build/benchmarks/minimal_example$(EXE_EXT): benchmarks/minimal_example.c $(SRCS)
 	@$(call MKDIR,build/benchmarks)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+build/benchmarks/bench_c10k$(EXE_EXT): benchmarks/bench_c10k.c $(SRCS) $(ASYNC_SRCS)
+	@$(call MKDIR,build/benchmarks)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+build/benchmarks/bench_latency$(EXE_EXT): benchmarks/bench_latency.c $(SRCS) $(ASYNC_SRCS)
+	@$(call MKDIR,build/benchmarks)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+build/benchmarks/bench_async_throughput$(EXE_EXT): benchmarks/bench_async_throughput.c $(SRCS) $(ASYNC_SRCS)
+	@$(call MKDIR,build/benchmarks)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
 build/tests/test_async_loop$(EXE_EXT): tests/test_async_loop.c tests/unity.c $(SRCS) $(ASYNC_SRCS)
 	@$(call MKDIR,build/tests)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
@@ -99,6 +115,14 @@ build/examples/async_server$(EXE_EXT): examples/async_server.c $(SRCS) $(ASYNC_S
 	@$(call MKDIR,build/examples)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+build/examples/async_client_pool$(EXE_EXT): examples/async_client_pool.c $(SRCS) $(ASYNC_SRCS)
+	@$(call MKDIR,build/examples)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+build/test_iocp_server$(EXE_EXT): test_iocp_server.c $(SRCS) $(ASYNC_SRCS)
+	@$(call MKDIR,build)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
 clean:
 	@$(RM)
 
@@ -108,6 +132,9 @@ docker-build:
 
 docker-test: docker-build
 	docker run --rm cwebhttp-test
+
+docker-c10k: docker-build
+	docker run --rm --ulimit nofile=65536:65536 --ulimit nproc=32768:32768 --memory=2g cwebhttp-test ./build/benchmarks/bench_c10k
 
 docker-shell: docker-build
 	docker run --rm -it cwebhttp-test /bin/bash
