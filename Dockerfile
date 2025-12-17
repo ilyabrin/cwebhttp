@@ -20,18 +20,15 @@ COPY . .
 # Build all targets including benchmarks
 RUN make clean && make all && make benchmarks
 
-# Run unit tests
+# Run unit tests during build
 RUN make test
 
-# Build and run async tests
-RUN make async-tests
+# Make test scripts executable
+RUN chmod +x test_async_server_docker.sh || true
 
-# Make test script executable
-RUN chmod +x test_async_server_docker.sh
+# Copy and set permissions for C10K benchmark script (if exists)
+COPY scripts/run_c10k_benchmark.sh /app/scripts/run_c10k_benchmark.sh 2>/dev/null || true
+RUN chmod +x /app/scripts/run_c10k_benchmark.sh 2>/dev/null || true
 
-# Copy and set permissions for C10K benchmark script
-COPY scripts/run_c10k_benchmark.sh /app/scripts/run_c10k_benchmark.sh
-RUN chmod +x /app/scripts/run_c10k_benchmark.sh
-
-# Set default command to run C10K benchmark
-CMD ["/bin/bash", "/app/scripts/run_c10k_benchmark.sh"]
+# Default command: run async tests for CI
+CMD ["sh", "-c", "make async-tests && echo 'All Docker tests passed!'"]
