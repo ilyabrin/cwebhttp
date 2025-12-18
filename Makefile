@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c11 -O2 -Iinclude -Itests
-SRCS = src/cwebhttp.c
+SRCS = src/cwebhttp.c src/memcheck.c
 ASYNC_SRCS = src/async/loop.c src/async/epoll.c src/async/kqueue.c src/async/iocp.c src/async/wsapoll.c src/async/select.c src/async/nonblock.c src/async/client.c src/async/server.c
 
 # OS detection
@@ -24,14 +24,15 @@ endif
 
 all: examples build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT) build/tests/test_chunked$(EXE_EXT)
 
-examples: build/examples/minimal_server$(EXE_EXT) build/examples/simple_client$(EXE_EXT) build/examples/hello_server$(EXE_EXT) build/examples/file_server$(EXE_EXT) build/examples/async_client$(EXE_EXT) build/examples/async_server$(EXE_EXT) build/examples/async_client_pool$(EXE_EXT)
+examples: build/examples/minimal_server$(EXE_EXT) build/examples/simple_client$(EXE_EXT) build/examples/hello_server$(EXE_EXT) build/examples/file_server$(EXE_EXT) build/examples/async_client$(EXE_EXT) build/examples/async_server$(EXE_EXT) build/examples/async_client_pool$(EXE_EXT) build/examples/memcheck_demo$(EXE_EXT)
 
 benchmarks: build/benchmarks/bench_parser$(EXE_EXT) build/benchmarks/bench_memory$(EXE_EXT) build/benchmarks/minimal_example$(EXE_EXT) build/benchmarks/bench_c10k$(EXE_EXT) build/benchmarks/bench_latency$(EXE_EXT) build/benchmarks/bench_async_throughput$(EXE_EXT)
 
-test: build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT) build/tests/test_chunked$(EXE_EXT)
+test: build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT) build/tests/test_chunked$(EXE_EXT) build/tests/test_memcheck$(EXE_EXT)
 	$(call RUN_TEST,test_parse)
 	$(call RUN_TEST,test_url)
 	$(call RUN_TEST,test_chunked)
+	$(call RUN_TEST,test_memcheck)
 
 integration: build/tests/test_integration$(EXE_EXT)
 	@echo "Running integration tests (requires internet connection)..."
@@ -63,6 +64,10 @@ build/examples/file_server$(EXE_EXT): examples/file_server.c $(SRCS)
 	@$(call MKDIR,build/examples)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+build/examples/memcheck_demo$(EXE_EXT): examples/memcheck_demo.c src/memcheck.c
+	@$(call MKDIR,build/examples)
+	$(CC) $(CFLAGS) examples/memcheck_demo.c src/memcheck.c -o $@ $(LDFLAGS)
+
 build/tests/test_parse$(EXE_EXT): tests/test_parse.c tests/unity.c $(SRCS)
 	@$(call MKDIR,build/tests)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
@@ -78,6 +83,10 @@ build/tests/test_chunked$(EXE_EXT): tests/test_chunked.c tests/unity.c $(SRCS)
 build/tests/test_integration$(EXE_EXT): tests/test_integration.c tests/unity.c $(SRCS)
 	@$(call MKDIR,build/tests)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+build/tests/test_memcheck$(EXE_EXT): tests/test_memcheck.c tests/unity.c src/memcheck.c
+	@$(call MKDIR,build/tests)
+	$(CC) $(CFLAGS) tests/test_memcheck.c tests/unity.c src/memcheck.c -o $@ $(LDFLAGS)
 
 build/benchmarks/bench_parser$(EXE_EXT): benchmarks/bench_parser.c $(SRCS)
 	@$(call MKDIR,build/benchmarks)
