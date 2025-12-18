@@ -6,7 +6,9 @@
 #include <mswsock.h>
 #include <stdio.h>
 
+#ifdef _MSC_VER
 #pragma comment(lib, "ws2_32.lib")
+#endif
 
 int main(void)
 {
