@@ -12,7 +12,9 @@
 #include <netinet/in.h>
 #else
 #include <winsock2.h>
+#ifdef _MSC_VER
 #pragma comment(lib, "ws2_32.lib")
+#endif
 #endif
 
 void setUp(void)
@@ -86,7 +88,8 @@ void test_set_nonblocking(void)
 #endif
 }
 
-// Callback counter for event tests
+#ifndef _WIN32
+// Callback counter for event tests (Unix only)
 static int callback_count = 0;
 
 static void test_callback(cwh_loop_t *loop, int fd, int events, void *data)
@@ -99,6 +102,7 @@ static void test_callback(cwh_loop_t *loop, int fd, int events, void *data)
     // Stop loop after first callback
     cwh_loop_stop(loop);
 }
+#endif
 
 // Test 4: Add and remove file descriptor
 void test_loop_add_del(void)
@@ -144,7 +148,8 @@ void test_loop_callback(void)
 
     // Write data to trigger read event
     const char *msg = "test";
-    write(fds[1], msg, strlen(msg));
+    ssize_t bytes_written = write(fds[1], msg, strlen(msg));
+    (void)bytes_written; // Intentionally ignore for test
 
     // Add read event
     callback_count = 0;

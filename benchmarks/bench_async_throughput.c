@@ -103,9 +103,7 @@ int main(void) {
         // Maintain concurrent request level
         int active = requests_sent - requests_completed - requests_failed;
         while (active < CONCURRENT_REQUESTS) {
-            if (cwh_async_get(g_loop, TEST_URL, request_callback, NULL) < 0) {
-                break;
-            }
+            cwh_async_get(g_loop, TEST_URL, request_callback, NULL);
             requests_sent++;
             active++;
         }

@@ -1,6 +1,7 @@
 // C10K Performance Benchmark - Linux epoll async server
 // Tests concurrent connection handling and throughput
 
+#define _DEFAULT_SOURCE  // For usleep()
 #include "../include/cwebhttp_async.h"
 #include <stdio.h>
 #include <stdlib.h>

@@ -7,15 +7,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <stdint.h>
 
 #ifdef _WIN32
 #include <windows.h>
 #define sleep(x) Sleep((x) * 1000)
-typedef long long int64_t;
 #else
 #include <unistd.h>
 #include <sys/time.h>
-typedef long long int64_t;
 #endif
 
 // Configuration
@@ -206,14 +205,9 @@ int main(void) {
             int64_t *start_time = malloc(sizeof(int64_t));
             *start_time = get_time_us();
             
-            if (cwh_async_get(g_loop, TEST_URL, request_callback, start_time) < 0) {
-                printf("Failed to send request %d\n", requests_sent);
-                free(start_time);
-                requests_failed++;
-            } else {
-                requests_sent++;
-                active++;
-            }
+            cwh_async_get(g_loop, TEST_URL, request_callback, start_time);
+            requests_sent++;
+            active++;
         }
         
         // Process some events

@@ -366,12 +366,12 @@ int cwh_iocp_add(cwh_iocp_t *iocp, int fd, int events, cwh_event_cb cb, void *da
             if (ret == 0 || WSAGetLastError() == WSA_IO_PENDING)
             {
                 entry->read_pending = 1;
-                printf("[IOCP] Initial read posted successfully (ret=%d, error=%lu)\n",
+                printf("[IOCP] Initial read posted successfully (ret=%d, error=%u)\n",
                        ret, WSAGetLastError());
             }
             else
             {
-                printf("[IOCP] WARNING: Failed to post initial read (error=%lu)\n",
+                printf("[IOCP] WARNING: Failed to post initial read (error=%u)\n",
                        WSAGetLastError());
             }
         }
@@ -487,7 +487,7 @@ int cwh_iocp_wait(cwh_iocp_t *iocp, int timeout_ms)
         &bytes_transferred,
         &completion_key,
         &overlapped,
-        timeout_ms >= 0 ? timeout_ms : INFINITE);
+        timeout_ms >= 0 ? (DWORD)timeout_ms : INFINITE);
 
     printf("[IOCP] GetQueuedCompletionStatus returned: result=%d, bytes=%lu, key=%p, overlapped=%p\n",
            result, bytes_transferred, (void *)completion_key, overlapped);

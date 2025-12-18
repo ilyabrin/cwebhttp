@@ -65,6 +65,11 @@ extern "C"
     // Internal function used by async server
     int cwh_loop_get_accepted_socket(cwh_loop_t *loop, int listen_fd);
 
+    // Get IOCP buffered data (Windows only)
+    // Returns number of bytes copied to buffer, or 0 if no data available
+    // Internal function used by async server for IOCP data retrieval
+    int cwh_loop_get_iocp_data(cwh_loop_t *loop, int fd, char *buffer, int size);
+
     // ============================================================================
     // Async Client API
     // ============================================================================

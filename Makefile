@@ -9,7 +9,7 @@ ifeq ($(OS),Windows_NT)
 	CFLAGS += -D_WIN32
 	LDFLAGS = -lws2_32 -lz
 	MKDIR = if not exist $(subst /,\,$(1)) mkdir $(subst /,\,$(1))
-	RM = if exist build rmdir /s /q build
+	RM = cmd /c "if exist build rmdir /s /q build"
 	EXE_EXT = .exe
 	RUN_TEST = .\build\tests\$(1).exe
 else

@@ -18,17 +18,18 @@ WORKDIR /app
 COPY . .
 
 # Build all targets including benchmarks
-RUN make clean && make all && make benchmarks
+RUN make all || (echo "Build failed!" && exit 1)
+RUN make benchmarks || (echo "Benchmark build failed!" && exit 1)
 
-# Run unit tests during build
-RUN make test
+# Run unit tests during build (not integration tests which need internet)
+RUN make test || (echo "Tests failed!" && exit 1)
+
+# Try integration tests but don't fail build if they fail (network dependent)
+RUN make integration || echo "Warning: Integration tests skipped (network required)"
 
 # Make test scripts executable
 RUN chmod +x test_async_server_docker.sh || true
-
-# Copy and set permissions for C10K benchmark script (if exists)
-COPY scripts/run_c10k_benchmark.sh /app/scripts/run_c10k_benchmark.sh 2>/dev/null || true
-RUN chmod +x /app/scripts/run_c10k_benchmark.sh 2>/dev/null || true
+RUN chmod +x scripts/*.sh || true
 
 # Default command: run async tests for CI
 CMD ["sh", "-c", "make async-tests && echo 'All Docker tests passed!'"]
