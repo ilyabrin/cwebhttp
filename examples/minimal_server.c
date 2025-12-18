@@ -1,12 +1,13 @@
 #include "cwebhttp.h"
 #include <stdio.h>
 
-void dummy_handler(cwh_conn_t *conn, cwh_request_t *req, void *data)
+cwh_error_t dummy_handler(cwh_request_t *req, cwh_conn_t *conn, void *data)
 {
-    (void)conn;
     (void)req;
+    (void)conn;
     (void)data;
     printf("Handler called!\n");
+    return CWH_OK;
 }
 
 int main()
