@@ -1,11 +1,11 @@
 // memcheck_demo.c - Demonstration of memory leak detection
 
-// Enable memory checking (must be before including memcheck.h)
-#define CWH_MEMCHECK_ENABLED 1
-
-#include "cwebhttp_memcheck.h"
 #include <stdio.h>
 #include <string.h>
+
+// Enable memory checking AFTER system headers
+#define CWH_MEMCHECK_ENABLED 1
+#include "cwebhttp_memcheck.h"
 
 // Example 1: Function with no leaks
 void example_no_leak(void)
@@ -81,10 +81,10 @@ void example_statistics(void)
     // Get statistics
     cwh_memcheck_stats_t stats = cwh_memcheck_get_stats();
 
-    printf("Current allocations: %zu\n", stats.current_allocations);
-    printf("Current memory usage: %zu bytes\n", stats.current_bytes);
-    printf("Peak allocations: %zu\n", stats.peak_allocations);
-    printf("Peak memory usage: %zu bytes\n", stats.peak_bytes);
+    printf("Current allocations: %llu\n", (unsigned long long)stats.current_allocations);
+    printf("Current memory usage: %llu bytes\n", (unsigned long long)stats.current_bytes);
+    printf("Peak allocations: %llu\n", (unsigned long long)stats.peak_allocations);
+    printf("Peak memory usage: %llu bytes\n", (unsigned long long)stats.peak_bytes);
 
     // Free half
     for (int i = 0; i < 5; i++)
@@ -94,10 +94,10 @@ void example_statistics(void)
 
     stats = cwh_memcheck_get_stats();
     printf("\nAfter freeing 5 allocations:\n");
-    printf("Current allocations: %zu\n", stats.current_allocations);
-    printf("Current memory usage: %zu bytes\n", stats.current_bytes);
-    printf("Peak still at: %zu allocations, %zu bytes\n",
-           stats.peak_allocations, stats.peak_bytes);
+    printf("Current allocations: %llu\n", (unsigned long long)stats.current_allocations);
+    printf("Current memory usage: %llu bytes\n", (unsigned long long)stats.current_bytes);
+    printf("Peak still at: %llu allocations, %llu bytes\n",
+           (unsigned long long)stats.peak_allocations, (unsigned long long)stats.peak_bytes);
 
     // Clean up the rest
     for (int i = 5; i < 10; i++)
@@ -116,11 +116,11 @@ void example_process_memory(void)
     cwh_process_memory_t mem;
     if (cwh_memcheck_get_process_memory(&mem) == 0)
     {
-        printf("Resident Set Size (RSS): %zu bytes (%.2f MB)\n",
-               mem.rss, mem.rss / (1024.0 * 1024.0));
-        printf("Virtual Memory Size: %zu bytes (%.2f MB)\n",
-               mem.vsize, mem.vsize / (1024.0 * 1024.0));
-        printf("Page faults: %zu\n", mem.page_faults);
+        printf("Resident Set Size (RSS): %llu bytes (%.2f MB)\n",
+               (unsigned long long)mem.rss, mem.rss / (1024.0 * 1024.0));
+        printf("Virtual Memory Size: %llu bytes (%.2f MB)\n",
+               (unsigned long long)mem.vsize, mem.vsize / (1024.0 * 1024.0));
+        printf("Page faults: %llu\n", (unsigned long long)mem.page_faults);
     }
     else
     {
@@ -157,8 +157,8 @@ int main(void)
     // Print current statistics
     printf("\n=== Final Statistics ===\n");
     cwh_memcheck_stats_t stats = cwh_memcheck_get_stats();
-    printf("Total allocations: %zu\n", stats.total_allocations);
-    printf("Total frees: %zu\n", stats.total_frees);
+    printf("Total allocations: %llu\n", (unsigned long long)stats.total_allocations);
+    printf("Total frees: %llu\n", (unsigned long long)stats.total_frees);
     printf("Current leaks: %d\n", cwh_memcheck_has_leaks());
 
     // Shutdown will print leak report

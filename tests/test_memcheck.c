@@ -1,10 +1,10 @@
 // test_memcheck.c - Memory leak detection tests
 
 #define CWH_MEMCHECK_ENABLED 1
-#include "cwebhttp_memcheck.h"
-#include "unity.h"
 #include <stdlib.h>
 #include <string.h>
+#include "unity.h"
+#include "cwebhttp_memcheck.h"
 
 void setUp(void)
 {

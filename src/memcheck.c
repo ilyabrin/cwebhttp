@@ -146,11 +146,11 @@ void cwh_memcheck_shutdown(void)
     }
 
     printf("\n[MEMCHECK] Statistics:\n");
-    printf("[MEMCHECK]   Total allocations: %zu\n", g_stats.total_allocations);
-    printf("[MEMCHECK]   Total frees:       %zu\n", g_stats.total_frees);
-    printf("[MEMCHECK]   Peak allocations:  %zu\n", g_stats.peak_allocations);
-    printf("[MEMCHECK]   Peak memory usage: %zu bytes (%.2f KB)\n",
-           g_stats.peak_bytes, g_stats.peak_bytes / 1024.0);
+    printf("[MEMCHECK]   Total allocations: %llu\n", (unsigned long long)g_stats.total_allocations);
+    printf("[MEMCHECK]   Total frees:       %llu\n", (unsigned long long)g_stats.total_frees);
+    printf("[MEMCHECK]   Peak allocations:  %llu\n", (unsigned long long)g_stats.peak_allocations);
+    printf("[MEMCHECK]   Peak memory usage: %llu bytes (%.2f KB)\n",
+           (unsigned long long)g_stats.peak_bytes, g_stats.peak_bytes / 1024.0);
     printf("[MEMCHECK] ========================================\n");
 
     g_initialized = 0;
@@ -172,8 +172,8 @@ void cwh_memcheck_report(void)
     printf("[MEMCHECK] Leaked allocations:\n");
     for (int i = 0; i < g_alloc_count; i++)
     {
-        printf("[MEMCHECK]   [%d] %zu bytes at %p\n",
-               i + 1, g_alloc_table[i].size, g_alloc_table[i].ptr);
+        printf("[MEMCHECK]   [%d] %llu bytes at %p\n",
+               i + 1, (unsigned long long)g_alloc_table[i].size, (void *)g_alloc_table[i].ptr);
         printf("[MEMCHECK]       Allocated at %s:%d\n",
                g_alloc_table[i].file, g_alloc_table[i].line);
         printf("[MEMCHECK]       Age: %llu ms\n",

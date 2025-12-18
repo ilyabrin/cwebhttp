@@ -8,7 +8,7 @@ ifeq ($(OS),Windows_NT)
 	# Windows
 	CFLAGS += -D_WIN32
 	LDFLAGS = -lws2_32 -lz
-	MKDIR = mkdir -p $(1)
+	MKDIR = if not exist $(subst /,\,$(1)) mkdir $(subst /,\,$(1))
 	RM = cmd /c "if exist build rmdir /s /q build"
 	EXE_EXT = .exe
 	RUN_TEST = .\build\tests\$(1).exe
@@ -24,7 +24,7 @@ endif
 
 all: examples build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT) build/tests/test_chunked$(EXE_EXT)
 
-examples: build/examples/minimal_server$(EXE_EXT) build/examples/simple_client$(EXE_EXT) build/examples/hello_server$(EXE_EXT) build/examples/file_server$(EXE_EXT) build/examples/async_client$(EXE_EXT) build/examples/async_server$(EXE_EXT) build/examples/async_client_pool$(EXE_EXT) build/examples/memcheck_demo$(EXE_EXT)
+examples: build/examples/minimal_server$(EXE_EXT) build/examples/simple_client$(EXE_EXT) build/examples/hello_server$(EXE_EXT) build/examples/file_server$(EXE_EXT) build/examples/async_client$(EXE_EXT) build/examples/async_server$(EXE_EXT) build/examples/async_client_pool$(EXE_EXT) build/examples/memcheck_demo$(EXE_EXT) build/examples/json_api_server$(EXE_EXT) build/examples/static_file_server$(EXE_EXT) build/examples/benchmark_client$(EXE_EXT)
 
 benchmarks: build/benchmarks/bench_parser$(EXE_EXT) build/benchmarks/bench_memory$(EXE_EXT) build/benchmarks/minimal_example$(EXE_EXT) build/benchmarks/bench_c10k$(EXE_EXT) build/benchmarks/bench_latency$(EXE_EXT) build/benchmarks/bench_async_throughput$(EXE_EXT)
 
@@ -67,6 +67,18 @@ build/examples/file_server$(EXE_EXT): examples/file_server.c $(SRCS)
 build/examples/memcheck_demo$(EXE_EXT): examples/memcheck_demo.c src/memcheck.c
 	@$(call MKDIR,build/examples)
 	$(CC) $(CFLAGS) examples/memcheck_demo.c src/memcheck.c -o $@ $(LDFLAGS)
+
+build/examples/json_api_server$(EXE_EXT): examples/json_api_server.c $(SRCS) $(ASYNC_SRCS)
+	@$(call MKDIR,build/examples)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+build/examples/static_file_server$(EXE_EXT): examples/static_file_server.c $(SRCS) $(ASYNC_SRCS)
+	@$(call MKDIR,build/examples)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+build/examples/benchmark_client$(EXE_EXT): examples/benchmark_client.c $(SRCS) $(ASYNC_SRCS)
+	@$(call MKDIR,build/examples)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 build/tests/test_parse$(EXE_EXT): tests/test_parse.c tests/unity.c $(SRCS)
 	@$(call MKDIR,build/tests)

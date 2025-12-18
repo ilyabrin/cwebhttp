@@ -76,9 +76,10 @@ extern "C"
     // Macro Wrappers
     // ============================================================================
 
-#ifdef CWH_MEMCHECK_ENABLED
+#if defined(CWH_MEMCHECK_ENABLED) && !defined(CWH_MEMCHECK_NO_OVERRIDE)
 
 // Replace standard memory functions with tracked versions
+// Note: Don't include this header in files that need to use standard malloc/free
 #define malloc(size) cwh_memcheck_malloc_internal(size, __FILE__, __LINE__)
 #define calloc(nmemb, size) cwh_memcheck_calloc_internal(nmemb, size, __FILE__, __LINE__)
 #define realloc(ptr, size) cwh_memcheck_realloc_internal(ptr, size, __FILE__, __LINE__)
