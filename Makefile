@@ -3,11 +3,21 @@ CFLAGS = -Wall -Wextra -std=c11 -O2 -Iinclude -Itests
 SRCS = src/cwebhttp.c src/memcheck.c src/log.c src/error.c
 ASYNC_SRCS = src/async/loop.c src/async/epoll.c src/async/kqueue.c src/async/iocp.c src/async/wsapoll.c src/async/select.c src/async/nonblock.c src/async/client.c src/async/server.c
 
+# TLS support (optional, compile with ENABLE_TLS=1)
+ifdef ENABLE_TLS
+	CFLAGS += -DCWEBHTTP_ENABLE_TLS=1
+	TLS_SRCS = src/tls_mbedtls.c
+	TLS_LDFLAGS = -lmbedtls -lmbedx509 -lmbedcrypto
+else
+	TLS_SRCS = src/tls_mbedtls.c
+	TLS_LDFLAGS =
+endif
+
 # OS detection
 ifeq ($(OS),Windows_NT)
 	# Windows
 	CFLAGS += -D_WIN32
-	LDFLAGS = -lws2_32 -lz
+	LDFLAGS = -lws2_32 -lz $(TLS_LDFLAGS)
 	MKDIR = if not exist $(subst /,\,$(1)) mkdir $(subst /,\,$(1))
 	RM = cmd /c "if exist build rmdir /s /q build"
 	EXE_EXT = .exe
@@ -15,7 +25,7 @@ ifeq ($(OS),Windows_NT)
 else
 	# Unix-like (Linux, macOS, etc.)
 	UNAME_S := $(shell uname -s)
-	LDFLAGS = -lz
+	LDFLAGS = -lz $(TLS_LDFLAGS)
 	MKDIR = mkdir -p $(1)
 	RM = rm -rf build
 	EXE_EXT =
@@ -156,6 +166,19 @@ build/test_iocp_server$(EXE_EXT): test_iocp_server.c $(SRCS) $(ASYNC_SRCS)
 	@$(call MKDIR,build)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+# TLS support targets
+build/tests/test_tls$(EXE_EXT): tests/test_tls.c tests/unity.c $(TLS_SRCS)
+	@$(call MKDIR,build/tests)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+build/examples/https_client$(EXE_EXT): examples/https_client.c $(SRCS) $(TLS_SRCS)
+	@$(call MKDIR,build/examples)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+test-tls: build/tests/test_tls$(EXE_EXT)
+	@echo "Running TLS tests..."
+	$(call RUN_TEST,test_tls)
+
 clean:
 	@$(RM)
 
@@ -172,4 +195,4 @@ docker-c10k: docker-build
 docker-shell: docker-build
 	docker run --rm -it cwebhttp-test /bin/bash
 
-.PHONY: all examples benchmarks test tests integration async-tests clean docker-build docker-test docker-shell
+.PHONY: all examples benchmarks test tests integration async-tests test-tls clean docker-build docker-test docker-shell
