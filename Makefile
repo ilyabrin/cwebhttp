@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c11 -O2 -Iinclude -Itests
+CFLAGS = -Wall -Wextra -std=gnu17 -O2 -Iinclude -Itests
 SRCS = src/cwebhttp.c src/memcheck.c src/log.c src/error.c
 ASYNC_SRCS = src/async/loop.c src/async/epoll.c src/async/kqueue.c src/async/iocp.c src/async/wsapoll.c src/async/select.c src/async/nonblock.c src/async/client.c src/async/server.c
 
@@ -15,23 +15,13 @@ endif
 
 # OS detection
 ifeq ($(OS),Windows_NT)
-	# Windows (detect if we're in MSYS2/MinGW or native CMD)
+	# Windows - Always use Unix-style commands (works in MSYS2/MinGW and Git Bash)
 	CFLAGS += -D_WIN32
 	LDFLAGS = -lws2_32 -lz $(TLS_LDFLAGS)
+	MKDIR = mkdir -p $(1)
+	RM = rm -rf build
 	EXE_EXT = .exe
-	
-	# Check if we're in a Unix-like shell (MSYS2/MinGW) or Windows CMD
-	ifeq ($(shell echo $$SHELL),)
-		# Native Windows CMD
-		MKDIR = if not exist $(subst /,\,$(1)) mkdir $(subst /,\,$(1))
-		RM = cmd /c "if exist build rmdir /s /q build"
-		RUN_TEST = .\build\tests\$(1).exe
-	else
-		# MSYS2/MinGW bash shell
-		MKDIR = mkdir -p $(1)
-		RM = rm -rf build
-		RUN_TEST = ./build/tests/$(1).exe
-	endif
+	RUN_TEST = ./build/tests/$(1).exe
 else
 	# Unix-like (Linux, macOS, etc.)
 	UNAME_S := $(shell uname -s)
