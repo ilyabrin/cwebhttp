@@ -4,6 +4,7 @@
 #endif
 
 #include "cwebhttp.h"
+#include "cwebhttp_tls.h"
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
@@ -139,6 +140,12 @@ void cwh_pool_return(cwh_conn_t *conn)
     // If connection doesn't support keep-alive, close it immediately
     if (!conn->keep_alive)
     {
+#if CWEBHTTP_ENABLE_TLS
+        if (conn->tls_session)
+            cwh_tls_session_free(conn->tls_session);
+        if (conn->tls_ctx)
+            cwh_tls_context_free(conn->tls_ctx);
+#endif
         if (conn->fd >= 0)
             CLOSE_SOCKET(conn->fd);
         free(conn->host);
@@ -150,6 +157,12 @@ void cwh_pool_return(cwh_conn_t *conn)
     if (g_pool_size >= CWH_POOL_MAX_CONNECTIONS)
     {
         // Close the connection instead of adding to pool
+#if CWEBHTTP_ENABLE_TLS
+        if (conn->tls_session)
+            cwh_tls_session_free(conn->tls_session);
+        if (conn->tls_ctx)
+            cwh_tls_context_free(conn->tls_ctx);
+#endif
         if (conn->fd >= 0)
             CLOSE_SOCKET(conn->fd);
         free(conn->host);
@@ -171,6 +184,12 @@ void cwh_pool_cleanup(void)
     while (curr)
     {
         cwh_conn_t *next = curr->next;
+#if CWEBHTTP_ENABLE_TLS
+        if (curr->tls_session)
+            cwh_tls_session_free(curr->tls_session);
+        if (curr->tls_ctx)
+            cwh_tls_context_free(curr->tls_ctx);
+#endif
         if (curr->fd >= 0)
             CLOSE_SOCKET(curr->fd);
         free(curr->host);
@@ -596,6 +615,20 @@ cwh_conn_t *cwh_connect(const char *url, int timeout_ms)
     if (sock < 0)
         return NULL;
 
+    // Check if this is an HTTPS connection
+    bool is_https = false;
+    if (parsed.scheme)
+    {
+        // Check scheme length and compare
+        const char *scheme_end = parsed.scheme;
+        while (*scheme_end && *scheme_end != ':')
+            scheme_end++;
+        size_t scheme_len = scheme_end - parsed.scheme;
+
+        if (scheme_len == 5 && strncasecmp(parsed.scheme, "https", 5) == 0)
+            is_https = true;
+    }
+
     // Create connection object
     conn = malloc(sizeof(cwh_conn_t));
     if (!conn)
@@ -609,6 +642,9 @@ cwh_conn_t *cwh_connect(const char *url, int timeout_ms)
     conn->port = parsed.port;
     conn->keep_alive = false; // Will be set to true if server supports it
     conn->last_used = time(NULL);
+    conn->is_https = is_https;
+    conn->tls_ctx = NULL;
+    conn->tls_session = NULL;
     conn->next = NULL;
 
     if (!conn->host)
@@ -616,6 +652,60 @@ cwh_conn_t *cwh_connect(const char *url, int timeout_ms)
         CLOSE_SOCKET(sock);
         free(conn);
         return NULL;
+    }
+
+    // If HTTPS, perform TLS handshake
+    if (is_https)
+    {
+#if CWEBHTTP_ENABLE_TLS
+        if (!cwh_tls_is_available())
+        {
+            CLOSE_SOCKET(sock);
+            free(conn->host);
+            free(conn);
+            return NULL;
+        }
+
+        // Create TLS context with default config
+        cwh_tls_config_t tls_config = cwh_tls_config_default();
+        conn->tls_ctx = cwh_tls_context_new(&tls_config);
+        if (!conn->tls_ctx)
+        {
+            CLOSE_SOCKET(sock);
+            free(conn->host);
+            free(conn);
+            return NULL;
+        }
+
+        // Create TLS session
+        conn->tls_session = cwh_tls_session_new(conn->tls_ctx, sock, host);
+        if (!conn->tls_session)
+        {
+            cwh_tls_context_free(conn->tls_ctx);
+            CLOSE_SOCKET(sock);
+            free(conn->host);
+            free(conn);
+            return NULL;
+        }
+
+        // Perform TLS handshake
+        cwh_tls_error_t tls_err = cwh_tls_handshake(conn->tls_session);
+        if (tls_err != CWH_TLS_OK)
+        {
+            cwh_tls_session_free(conn->tls_session);
+            cwh_tls_context_free(conn->tls_ctx);
+            CLOSE_SOCKET(sock);
+            free(conn->host);
+            free(conn);
+            return NULL;
+        }
+#else
+        // TLS not enabled at compile time
+        CLOSE_SOCKET(sock);
+        free(conn->host);
+        free(conn);
+        return NULL;
+#endif
     }
 
     return conn;
@@ -689,6 +779,42 @@ static int recv_with_timeout(int fd, char *buf, size_t len, int timeout_ms)
     return n;
 }
 
+// TLS-aware send wrapper
+static int conn_send(cwh_conn_t *conn, const char *buf, size_t len, int timeout_ms)
+{
+    if (!conn)
+        return -1;
+
+#if CWEBHTTP_ENABLE_TLS
+    if (conn->is_https && conn->tls_session)
+    {
+        // TLS send
+        return cwh_tls_write(conn->tls_session, buf, len);
+    }
+#endif
+
+    // Regular TCP send
+    return send_with_timeout(conn->fd, buf, len, timeout_ms);
+}
+
+// TLS-aware recv wrapper
+static int conn_recv(cwh_conn_t *conn, char *buf, size_t len, int timeout_ms)
+{
+    if (!conn)
+        return -1;
+
+#if CWEBHTTP_ENABLE_TLS
+    if (conn->is_https && conn->tls_session)
+    {
+        // TLS recv
+        return cwh_tls_read(conn->tls_session, buf, len);
+    }
+#endif
+
+    // Regular TCP recv
+    return recv_with_timeout(conn->fd, buf, len, timeout_ms);
+}
+
 cwh_error_t cwh_send_req(cwh_conn_t *conn, cwh_method_t method, const char *path, const char **headers, const char *body, size_t body_len)
 {
     if (!conn || conn->fd < 0 || !path)
@@ -745,13 +871,13 @@ cwh_error_t cwh_send_req(cwh_conn_t *conn, cwh_method_t method, const char *path
     offset += snprintf(req_buf + offset, sizeof(req_buf) - offset, "\r\n");
 
     // Send headers
-    if (send_with_timeout(conn->fd, req_buf, offset, 5000) < 0)
+    if (conn_send(conn, req_buf, offset, 5000) < 0)
         return CWH_ERR_TIMEOUT;
 
     // Send body if present
     if (body && body_len > 0)
     {
-        if (send_with_timeout(conn->fd, body, body_len, 5000) < 0)
+        if (conn_send(conn, body, body_len, 5000) < 0)
             return CWH_ERR_TIMEOUT;
     }
 
@@ -765,7 +891,7 @@ cwh_error_t cwh_read_res(cwh_conn_t *conn, cwh_response_t *res)
 
     // Receive response (simplified - just read what's available)
     static char recv_buf[16384];
-    int n = recv_with_timeout(conn->fd, recv_buf, sizeof(recv_buf) - 1, 5000);
+    int n = conn_recv(conn, recv_buf, sizeof(recv_buf) - 1, 5000);
 
     if (n < 0)
         return CWH_ERR_TIMEOUT;

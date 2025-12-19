@@ -179,6 +179,19 @@ test-tls: build/tests/test_tls$(EXE_EXT)
 	@echo "Running TLS tests..."
 	$(call RUN_TEST,test_tls)
 
+# HTTPS integration test (requires ENABLE_TLS=1 and internet)
+build/test_https$(EXE_EXT): test_https.c $(SRCS) $(TLS_SRCS)
+	@$(call MKDIR,build)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+test-https: build/test_https$(EXE_EXT)
+	@echo "Running HTTPS integration tests (requires internet)..."
+ifeq ($(OS),Windows_NT)
+	@.\build\test_https.exe
+else
+	@./build/test_https
+endif
+
 clean:
 	@$(RM)
 
@@ -195,4 +208,4 @@ docker-c10k: docker-build
 docker-shell: docker-build
 	docker run --rm -it cwebhttp-test /bin/bash
 
-.PHONY: all examples benchmarks test tests integration async-tests test-tls clean docker-build docker-test docker-shell
+.PHONY: all examples benchmarks test tests integration async-tests test-tls test-https clean docker-build docker-test docker-shell
