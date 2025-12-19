@@ -40,7 +40,7 @@ jobs:
           CC: ${{ matrix.compiler }}
         run: |
           echo "Building HTTPS client..."
-          $CC -DCWEBHTTP_ENABLE_TLS=1 -Wall -Wextra -std=c11 -O2 \
+          $CC -DCWEBHTTP_ENABLE_TLS=1 -D_POSIX_C_SOURCE=200112L -Wall -Wextra -std=gnu11 -O2 \
             -Iinclude -Itests \
             examples/https_client.c \
             src/cwebhttp.c src/tls_mbedtls.c src/memcheck.c src/log.c src/error.c \
@@ -48,7 +48,7 @@ jobs:
             -lz -lmbedtls -lmbedx509 -lmbedcrypto -lpthread
 
           echo "Building HTTPS server..."
-          $CC -DCWEBHTTP_ENABLE_TLS=1 -Wall -Wextra -std=c11 -O2 \
+          $CC -DCWEBHTTP_ENABLE_TLS=1 -D_POSIX_C_SOURCE=200112L -Wall -Wextra -std=gnu11 -O2 \
             -Iinclude -Itests \
             examples/https_server.c \
             src/async/loop.c src/async/server.c src/cwebhttp.c \
@@ -57,7 +57,7 @@ jobs:
             -lz -lmbedtls -lmbedx509 -lmbedcrypto -lpthread
 
           echo "Building advanced HTTPS server..."
-          $CC -DCWEBHTTP_ENABLE_TLS=1 -Wall -Wextra -std=c11 -O2 \
+          $CC -DCWEBHTTP_ENABLE_TLS=1 -D_POSIX_C_SOURCE=200112L -Wall -Wextra -std=gnu11 -O2 \
             -Iinclude -Itests \
             examples/https_server_advanced.c \
             src/async/loop.c src/async/server.c src/cwebhttp.c \
@@ -69,7 +69,7 @@ jobs:
         env:
           CC: ${{ matrix.compiler }}
         run: |
-          $CC -DCWEBHTTP_ENABLE_TLS=1 -Wall -Wextra -std=c11 -O2 \
+          $CC -DCWEBHTTP_ENABLE_TLS=1 -D_POSIX_C_SOURCE=200112L -Wall -Wextra -std=gnu11 -O2 \
             -Iinclude -Itests \
             tests/test_tls.c \
             src/cwebhttp.c src/tls_mbedtls.c src/memcheck.c src/log.c src/error.c \
@@ -247,7 +247,7 @@ jobs:
           mkdir -p build/examples || true
 
           echo "Building HTTPS client..."
-          gcc -DCWEBHTTP_ENABLE_TLS=1 -Wall -Wextra -std=c11 -O2 \
+          gcc -DCWEBHTTP_ENABLE_TLS=1 -Wall -Wextra -std=gnu11 -O2 \
             -Iinclude -Itests \
             examples/https_client.c \
             src/cwebhttp.c src/tls_mbedtls.c src/memcheck.c src/log.c src/error.c \
@@ -255,7 +255,7 @@ jobs:
             -lz -lmbedtls -lmbedx509 -lmbedcrypto -lws2_32 || echo "Client build failed"
 
           echo "Building HTTPS server..."
-          gcc -DCWEBHTTP_ENABLE_TLS=1 -Wall -Wextra -std=c11 -O2 \
+          gcc -DCWEBHTTP_ENABLE_TLS=1 -Wall -Wextra -std=gnu11 -O2 \
             -Iinclude -Itests \
             examples/https_server.c \
             src/async/loop.c src/async/server.c src/cwebhttp.c \
@@ -305,7 +305,7 @@ jobs:
           mkdir -p build/benchmarks
 
           echo "Building TLS handshake benchmark..."
-          gcc -DCWEBHTTP_ENABLE_TLS=1 -Wall -Wextra -std=c11 -O2 \
+          gcc -DCWEBHTTP_ENABLE_TLS=1 -Wall -Wextra -std=gnu11 -O2 \
             -Iinclude -Itests \
             benchmarks/bench_tls_handshake.c \
             src/cwebhttp.c src/tls_mbedtls.c src/memcheck.c src/log.c src/error.c \

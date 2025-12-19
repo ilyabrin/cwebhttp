@@ -121,6 +121,12 @@ extern "C"
 #define CWH_LOG_WARN(...) cwh_log_internal(CWH_LOG_WARN, __FILE__, __LINE__, __func__, __VA_ARGS__)
 #define CWH_LOG_ERROR(...) cwh_log_internal(CWH_LOG_ERROR, __FILE__, __LINE__, __func__, __VA_ARGS__)
 
+/* Lowercase aliases for convenience */
+#define cwh_log_debug CWH_LOG_DEBUG
+#define cwh_log_info CWH_LOG_INFO
+#define cwh_log_warn CWH_LOG_WARN
+#define cwh_log_error CWH_LOG_ERROR
+
 #ifdef __cplusplus
 }
 #endif
