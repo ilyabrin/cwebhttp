@@ -137,6 +137,14 @@ extern "C"
     // Create async server
     cwh_async_server_t *cwh_async_server_new(cwh_loop_t *loop);
 
+    // Configure TLS/HTTPS (must be called before cwh_async_listen)
+    // cert_file: Path to server certificate (PEM format)
+    // key_file: Path to server private key (PEM format)
+    // Returns 0 on success, -1 on error
+    int cwh_async_server_set_tls(cwh_async_server_t *server,
+                                 const char *cert_file,
+                                 const char *key_file);
+
     // Register route handler
     void cwh_async_route(cwh_async_server_t *server,
                          const char *method,

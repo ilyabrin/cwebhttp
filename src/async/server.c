@@ -8,6 +8,7 @@
 
 #include "../../include/cwebhttp_async.h"
 #include "../../include/cwebhttp.h"
+#include "../../include/cwebhttp_tls.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -63,6 +64,10 @@ typedef struct cwh_async_conn
     cwh_conn_state_t state;          // Connection state
     struct cwh_async_server *server; // Back pointer to server
 
+    // TLS/HTTPS
+    struct cwh_tls_session *tls_session; // TLS session (if HTTPS)
+    bool tls_handshake_done;             // TLS handshake complete
+
     // Request data
     char recv_buf[16384];  // Request buffer (16KB)
     size_t recv_len;       // Bytes received
@@ -101,6 +106,12 @@ struct cwh_async_server
     cwh_async_conn_t *connections; // Active connections (linked list)
     int conn_count;                // Current connection count
     int max_connections;           // Max concurrent connections (default: 10000)
+
+    // TLS/HTTPS support
+    bool use_tls;                    // TLS enabled flag
+    struct cwh_tls_context *tls_ctx; // TLS context (if HTTPS)
+    char *cert_file;                 // Server certificate path
+    char *key_file;                  // Private key path
 
     // Statistics
     uint64_t total_requests;    // Total requests handled
@@ -143,10 +154,64 @@ cwh_async_server_t *cwh_async_server_new(cwh_loop_t *loop)
     server->connections = NULL;
     server->conn_count = 0;
     server->max_connections = 10000; // C10K capable
+    server->use_tls = false;
+    server->tls_ctx = NULL;
+    server->cert_file = NULL;
+    server->key_file = NULL;
     server->total_requests = 0;
     server->total_connections = 0;
 
     return server;
+}
+
+// Configure TLS/HTTPS (must be called before cwh_async_listen)
+int cwh_async_server_set_tls(cwh_async_server_t *server,
+                             const char *cert_file,
+                             const char *key_file)
+{
+    if (!server || !cert_file || !key_file)
+        return -1;
+
+#if CWEBHTTP_ENABLE_TLS
+    if (!cwh_tls_is_available())
+        return -1;
+
+    // Store certificate paths
+    server->cert_file = strdup(cert_file);
+    server->key_file = strdup(key_file);
+
+    if (!server->cert_file || !server->key_file)
+    {
+        free(server->cert_file);
+        free(server->key_file);
+        return -1;
+    }
+
+    // Create TLS context for server
+    cwh_tls_config_t tls_config = cwh_tls_config_default();
+    tls_config.verify_peer = false; // Server doesn't verify client by default
+    tls_config.client_cert = cert_file;
+    tls_config.client_key = key_file;
+
+    server->tls_ctx = cwh_tls_context_new(&tls_config);
+    if (!server->tls_ctx)
+    {
+        free(server->cert_file);
+        free(server->key_file);
+        server->cert_file = NULL;
+        server->key_file = NULL;
+        return -1;
+    }
+
+    server->use_tls = true;
+    return 0;
+#else
+    // TLS not compiled in
+    (void)server;
+    (void)cert_file;
+    (void)key_file;
+    return -1;
+#endif
 }
 
 // Start listening on port (non-blocking)
@@ -294,6 +359,17 @@ void cwh_async_server_free(cwh_async_server_t *server)
         route = next;
     }
 
+    // Cleanup TLS resources
+#if CWEBHTTP_ENABLE_TLS
+    if (server->tls_ctx)
+    {
+        cwh_tls_context_free(server->tls_ctx);
+        server->tls_ctx = NULL;
+    }
+    free(server->cert_file);
+    free(server->key_file);
+#endif
+
     free(server);
 }
 
@@ -393,6 +469,8 @@ static cwh_async_conn_t *create_connection(cwh_async_server_t *server, int clien
     conn->fd = client_fd;
     conn->state = CONN_STATE_READING_REQUEST;
     conn->server = server;
+    conn->tls_session = NULL;
+    conn->tls_handshake_done = false;
     conn->recv_len = 0;
     conn->request_complete = false;
     conn->send_len = 0;
@@ -401,6 +479,25 @@ static cwh_async_conn_t *create_connection(cwh_async_server_t *server, int clien
     conn->timeout_ms = 10000; // 10 seconds idle timeout
     conn->keep_alive = false;
     conn->requests_served = 0;
+
+    // If server uses TLS, create TLS session
+#if CWEBHTTP_ENABLE_TLS
+    if (server->use_tls && server->tls_ctx)
+    {
+        conn->tls_session = cwh_tls_session_new(server->tls_ctx, client_fd, NULL);
+        if (!conn->tls_session)
+        {
+            // TLS session creation failed
+#ifdef _WIN32
+            closesocket(client_fd);
+#else
+            close(client_fd);
+#endif
+            free(conn);
+            return NULL;
+        }
+    }
+#endif
 
     // Add to server's connection list
     conn->next = server->connections;
@@ -421,6 +518,15 @@ static void close_connection(cwh_async_conn_t *conn)
 
     // Remove from event loop
     cwh_loop_del(server->loop, conn->fd);
+
+    // Cleanup TLS session if present
+#if CWEBHTTP_ENABLE_TLS
+    if (conn->tls_session)
+    {
+        cwh_tls_session_free(conn->tls_session);
+        conn->tls_session = NULL;
+    }
+#endif
 
     // Close socket
 #ifdef _WIN32
@@ -652,6 +758,50 @@ static void connection_event_handler(cwh_loop_t *loop, int fd, int events, void 
 // Request/Response I/O
 // ============================================================================
 
+// TLS-aware recv wrapper
+static ssize_t conn_recv_tls(cwh_async_conn_t *conn, char *buf, size_t len)
+{
+#if CWEBHTTP_ENABLE_TLS
+    if (conn->tls_session)
+    {
+        // For TLS server, we need to handle handshake first
+        if (!conn->tls_handshake_done)
+        {
+            cwh_tls_error_t tls_err = cwh_tls_handshake(conn->tls_session);
+            if (tls_err == CWH_TLS_OK)
+            {
+                conn->tls_handshake_done = true;
+                // Continue to read
+            }
+            else
+            {
+                // Handshake failed or needs more data
+                return -1;
+            }
+        }
+
+        return cwh_tls_read(conn->tls_session, buf, len);
+    }
+#endif
+
+    // Plain TCP recv
+    return recv(conn->fd, buf, (int)len, 0);
+}
+
+// TLS-aware send wrapper
+static ssize_t conn_send_tls(cwh_async_conn_t *conn, const char *buf, size_t len)
+{
+#if CWEBHTTP_ENABLE_TLS
+    if (conn->tls_session && conn->tls_handshake_done)
+    {
+        return cwh_tls_write(conn->tls_session, buf, len);
+    }
+#endif
+
+    // Plain TCP send
+    return send(conn->fd, buf, (int)len, 0);
+}
+
 // Read request data (non-blocking)
 static int read_request(cwh_async_conn_t *conn)
 {
@@ -671,10 +821,10 @@ static int read_request(cwh_async_conn_t *conn)
     else
 #endif
     {
-        n = recv(conn->fd,
-                 conn->recv_buf + conn->recv_len,
-                 sizeof(conn->recv_buf) - conn->recv_len - 1,
-                 0);
+        // Use TLS-aware recv wrapper
+        n = conn_recv_tls(conn,
+                          conn->recv_buf + conn->recv_len,
+                          sizeof(conn->recv_buf) - conn->recv_len - 1);
     }
 
     if (n > 0)
@@ -720,10 +870,10 @@ static int read_request(cwh_async_conn_t *conn)
 // Write response data (non-blocking)
 static int write_response(cwh_async_conn_t *conn)
 {
-    ssize_t n = send(conn->fd,
-                     conn->send_buf + conn->send_offset,
-                     conn->send_len - conn->send_offset,
-                     0);
+    // Use TLS-aware send wrapper
+    ssize_t n = conn_send_tls(conn,
+                              conn->send_buf + conn->send_offset,
+                              conn->send_len - conn->send_offset);
 
     if (n > 0)
     {
