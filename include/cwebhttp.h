@@ -68,15 +68,22 @@ typedef struct
     bool is_valid;
 } cwh_url_t;
 
+// Forward declare TLS types (defined in cwebhttp_tls.h)
+struct cwh_tls_context;
+struct cwh_tls_session;
+
 // Абстракция соединения с keep-alive поддержкой
 typedef struct cwh_conn
 {
     int fd;
     char *host;
     int port;
-    bool keep_alive;       // Connection supports keep-alive
-    time_t last_used;      // Timestamp of last use (for timeout)
-    struct cwh_conn *next; // For connection pool linked list
+    bool keep_alive;                     // Connection supports keep-alive
+    time_t last_used;                    // Timestamp of last use (for timeout)
+    bool is_https;                       // Whether this is an HTTPS connection
+    struct cwh_tls_context *tls_ctx;     // TLS context (if HTTPS)
+    struct cwh_tls_session *tls_session; // TLS session (if HTTPS)
+    struct cwh_conn *next;               // For connection pool linked list
 } cwh_conn_t;
 
 // Cookie structure for cookie jar

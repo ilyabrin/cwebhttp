@@ -1,21 +1,41 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=c11 -O2 -Iinclude -Itests
-SRCS = src/cwebhttp.c
+SRCS = src/cwebhttp.c src/memcheck.c src/log.c src/error.c
 ASYNC_SRCS = src/async/loop.c src/async/epoll.c src/async/kqueue.c src/async/iocp.c src/async/wsapoll.c src/async/select.c src/async/nonblock.c src/async/client.c src/async/server.c
+
+# TLS support (optional, compile with ENABLE_TLS=1)
+ifdef ENABLE_TLS
+	CFLAGS += -DCWEBHTTP_ENABLE_TLS=1
+	TLS_SRCS = src/tls_mbedtls.c
+	TLS_LDFLAGS = -lmbedtls -lmbedx509 -lmbedcrypto
+else
+	TLS_SRCS = src/tls_mbedtls.c
+	TLS_LDFLAGS =
+endif
 
 # OS detection
 ifeq ($(OS),Windows_NT)
-	# Windows
+	# Windows (detect if we're in MSYS2/MinGW or native CMD)
 	CFLAGS += -D_WIN32
-	LDFLAGS = -lws2_32 -lz
-	MKDIR = mkdir -p $(1)
-	RM = cmd /c "if exist build rmdir /s /q build"
+	LDFLAGS = -lws2_32 -lz $(TLS_LDFLAGS)
 	EXE_EXT = .exe
-	RUN_TEST = .\build\tests\$(1).exe
+	
+	# Check if we're in a Unix-like shell (MSYS2/MinGW) or Windows CMD
+	ifeq ($(shell echo $$SHELL),)
+		# Native Windows CMD
+		MKDIR = if not exist $(subst /,\,$(1)) mkdir $(subst /,\,$(1))
+		RM = cmd /c "if exist build rmdir /s /q build"
+		RUN_TEST = .\build\tests\$(1).exe
+	else
+		# MSYS2/MinGW bash shell
+		MKDIR = mkdir -p $(1)
+		RM = rm -rf build
+		RUN_TEST = ./build/tests/$(1).exe
+	endif
 else
 	# Unix-like (Linux, macOS, etc.)
 	UNAME_S := $(shell uname -s)
-	LDFLAGS = -lz
+	LDFLAGS = -lz $(TLS_LDFLAGS)
 	MKDIR = mkdir -p $(1)
 	RM = rm -rf build
 	EXE_EXT =
@@ -24,14 +44,15 @@ endif
 
 all: examples build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT) build/tests/test_chunked$(EXE_EXT)
 
-examples: build/examples/minimal_server$(EXE_EXT) build/examples/simple_client$(EXE_EXT) build/examples/hello_server$(EXE_EXT) build/examples/file_server$(EXE_EXT) build/examples/async_client$(EXE_EXT) build/examples/async_server$(EXE_EXT) build/examples/async_client_pool$(EXE_EXT)
+examples: build/examples/minimal_server$(EXE_EXT) build/examples/simple_client$(EXE_EXT) build/examples/hello_server$(EXE_EXT) build/examples/file_server$(EXE_EXT) build/examples/async_client$(EXE_EXT) build/examples/async_server$(EXE_EXT) build/examples/async_client_pool$(EXE_EXT) build/examples/memcheck_demo$(EXE_EXT) build/examples/logging_demo$(EXE_EXT) build/examples/json_api_server$(EXE_EXT) build/examples/static_file_server$(EXE_EXT) build/examples/benchmark_client$(EXE_EXT) build/examples/error_handling_demo$(EXE_EXT)
 
 benchmarks: build/benchmarks/bench_parser$(EXE_EXT) build/benchmarks/bench_memory$(EXE_EXT) build/benchmarks/minimal_example$(EXE_EXT) build/benchmarks/bench_c10k$(EXE_EXT) build/benchmarks/bench_latency$(EXE_EXT) build/benchmarks/bench_async_throughput$(EXE_EXT)
 
-test: build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT) build/tests/test_chunked$(EXE_EXT)
+test: build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT) build/tests/test_chunked$(EXE_EXT) build/tests/test_memcheck$(EXE_EXT)
 	$(call RUN_TEST,test_parse)
 	$(call RUN_TEST,test_url)
 	$(call RUN_TEST,test_chunked)
+	$(call RUN_TEST,test_memcheck)
 
 integration: build/tests/test_integration$(EXE_EXT)
 	@echo "Running integration tests (requires internet connection)..."
@@ -63,6 +84,34 @@ build/examples/file_server$(EXE_EXT): examples/file_server.c $(SRCS)
 	@$(call MKDIR,build/examples)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+build/examples/memcheck_demo$(EXE_EXT): examples/memcheck_demo.c src/memcheck.c
+	@$(call MKDIR,build/examples)
+	$(CC) $(CFLAGS) examples/memcheck_demo.c src/memcheck.c -o $@ $(LDFLAGS)
+
+build/examples/logging_demo$(EXE_EXT): examples/logging_demo.c src/log.c
+	@$(call MKDIR,build/examples)
+	$(CC) $(CFLAGS) examples/logging_demo.c src/log.c -o $@ $(LDFLAGS)
+
+build/examples/json_api_server$(EXE_EXT): examples/json_api_server.c $(SRCS) $(ASYNC_SRCS)
+	@$(call MKDIR,build/examples)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+build/examples/static_file_server$(EXE_EXT): examples/static_file_server.c $(SRCS) $(ASYNC_SRCS)
+	@$(call MKDIR,build/examples)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+build/examples/benchmark_client$(EXE_EXT): examples/benchmark_client.c $(SRCS) $(ASYNC_SRCS)
+	@$(call MKDIR,build/examples)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+build/examples/error_handling_demo$(EXE_EXT): examples/error_handling_demo.c src/error.c src/log.c
+	@$(call MKDIR,build/examples)
+	$(CC) $(CFLAGS) examples/error_handling_demo.c src/error.c src/log.c -o $@ $(LDFLAGS)
+
+build/examples/error_demo$(EXE_EXT): examples/error_demo.c src/error.c src/log.c
+	@$(call MKDIR,build/examples)
+	$(CC) $(CFLAGS) examples/error_demo.c src/error.c src/log.c -o $@ $(LDFLAGS)
+
 build/tests/test_parse$(EXE_EXT): tests/test_parse.c tests/unity.c $(SRCS)
 	@$(call MKDIR,build/tests)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
@@ -78,6 +127,10 @@ build/tests/test_chunked$(EXE_EXT): tests/test_chunked.c tests/unity.c $(SRCS)
 build/tests/test_integration$(EXE_EXT): tests/test_integration.c tests/unity.c $(SRCS)
 	@$(call MKDIR,build/tests)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+build/tests/test_memcheck$(EXE_EXT): tests/test_memcheck.c tests/unity.c src/memcheck.c
+	@$(call MKDIR,build/tests)
+	$(CC) $(CFLAGS) tests/test_memcheck.c tests/unity.c src/memcheck.c -o $@ $(LDFLAGS)
 
 build/benchmarks/bench_parser$(EXE_EXT): benchmarks/bench_parser.c $(SRCS)
 	@$(call MKDIR,build/benchmarks)
@@ -123,6 +176,32 @@ build/test_iocp_server$(EXE_EXT): test_iocp_server.c $(SRCS) $(ASYNC_SRCS)
 	@$(call MKDIR,build)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
+# TLS support targets
+build/tests/test_tls$(EXE_EXT): tests/test_tls.c tests/unity.c $(TLS_SRCS)
+	@$(call MKDIR,build/tests)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+build/examples/https_client$(EXE_EXT): examples/https_client.c $(SRCS) $(TLS_SRCS)
+	@$(call MKDIR,build/examples)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+test-tls: build/tests/test_tls$(EXE_EXT)
+	@echo "Running TLS tests..."
+	$(call RUN_TEST,test_tls)
+
+# HTTPS integration test (requires ENABLE_TLS=1 and internet)
+build/test_https$(EXE_EXT): test_https.c $(SRCS) $(TLS_SRCS)
+	@$(call MKDIR,build)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+test-https: build/test_https$(EXE_EXT)
+	@echo "Running HTTPS integration tests (requires internet)..."
+ifeq ($(OS),Windows_NT)
+	@.\build\test_https.exe
+else
+	@./build/test_https
+endif
+
 clean:
 	@$(RM)
 
@@ -139,4 +218,4 @@ docker-c10k: docker-build
 docker-shell: docker-build
 	docker run --rm -it cwebhttp-test /bin/bash
 
-.PHONY: all examples benchmarks test tests integration async-tests clean docker-build docker-test docker-shell
+.PHONY: all examples benchmarks test tests integration async-tests test-tls test-https clean docker-build docker-test docker-shell

@@ -62,6 +62,9 @@ dkms.conf
 # Build directory
 build/
 
+# Local mbedTLS installation (users build their own)
+mbedtls/
+
 # Test output files
 *.log
 *_output.txt
