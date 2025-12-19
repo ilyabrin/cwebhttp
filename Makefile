@@ -15,13 +15,23 @@ endif
 
 # OS detection
 ifeq ($(OS),Windows_NT)
-	# Windows
+	# Windows (detect if we're in MSYS2/MinGW or native CMD)
 	CFLAGS += -D_WIN32
 	LDFLAGS = -lws2_32 -lz $(TLS_LDFLAGS)
-	MKDIR = if not exist $(subst /,\,$(1)) mkdir $(subst /,\,$(1))
-	RM = cmd /c "if exist build rmdir /s /q build"
 	EXE_EXT = .exe
-	RUN_TEST = .\build\tests\$(1).exe
+	
+	# Check if we're in a Unix-like shell (MSYS2/MinGW) or Windows CMD
+	ifeq ($(shell echo $$SHELL),)
+		# Native Windows CMD
+		MKDIR = if not exist $(subst /,\,$(1)) mkdir $(subst /,\,$(1))
+		RM = cmd /c "if exist build rmdir /s /q build"
+		RUN_TEST = .\build\tests\$(1).exe
+	else
+		# MSYS2/MinGW bash shell
+		MKDIR = mkdir -p $(1)
+		RM = rm -rf build
+		RUN_TEST = ./build/tests/$(1).exe
+	endif
 else
 	# Unix-like (Linux, macOS, etc.)
 	UNAME_S := $(shell uname -s)
