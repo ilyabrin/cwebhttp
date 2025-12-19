@@ -169,6 +169,16 @@ int cwh_async_server_set_tls(cwh_async_server_t *server,
                              const char *cert_file,
                              const char *key_file)
 {
+    return cwh_async_server_set_tls_ex(server, cert_file, key_file, NULL, false);
+}
+
+// Configure TLS with advanced options
+int cwh_async_server_set_tls_ex(cwh_async_server_t *server,
+                                const char *cert_file,
+                                const char *key_file,
+                                const char *ca_cert_path,
+                                bool require_client_cert)
+{
     if (!server || !cert_file || !key_file)
         return -1;
 
@@ -189,9 +199,13 @@ int cwh_async_server_set_tls(cwh_async_server_t *server,
 
     // Create TLS context for server
     cwh_tls_config_t tls_config = cwh_tls_config_default();
-    tls_config.verify_peer = false; // Server doesn't verify client by default
+    tls_config.verify_peer = false;
     tls_config.client_cert = cert_file;
     tls_config.client_key = key_file;
+    tls_config.ca_cert_path = ca_cert_path;
+    tls_config.require_client_cert = require_client_cert;
+    tls_config.session_cache = true;
+    tls_config.session_timeout = 86400;
 
     server->tls_ctx = cwh_tls_context_new(&tls_config);
     if (!server->tls_ctx)
@@ -210,6 +224,8 @@ int cwh_async_server_set_tls(cwh_async_server_t *server,
     (void)server;
     (void)cert_file;
     (void)key_file;
+    (void)ca_cert_path;
+    (void)require_client_cert;
     return -1;
 #endif
 }
@@ -484,7 +500,7 @@ static cwh_async_conn_t *create_connection(cwh_async_server_t *server, int clien
 #if CWEBHTTP_ENABLE_TLS
     if (server->use_tls && server->tls_ctx)
     {
-        conn->tls_session = cwh_tls_session_new(server->tls_ctx, client_fd, NULL);
+        conn->tls_session = cwh_tls_session_new_server(server->tls_ctx, client_fd);
         if (!conn->tls_session)
         {
             // TLS session creation failed
@@ -496,6 +512,7 @@ static cwh_async_conn_t *create_connection(cwh_async_server_t *server, int clien
             free(conn);
             return NULL;
         }
+        conn->state = CONN_STATE_NEW;
     }
 #endif
 
@@ -691,6 +708,40 @@ static void connection_event_handler(cwh_loop_t *loop, int fd, int events, void 
 
     switch (conn->state)
     {
+    case CONN_STATE_NEW:
+#if CWEBHTTP_ENABLE_TLS
+        if (conn->tls_session && !conn->tls_handshake_done)
+        {
+            cwh_tls_error_t tls_err = cwh_tls_handshake(conn->tls_session);
+            if (tls_err == CWH_TLS_OK)
+            {
+                conn->tls_handshake_done = true;
+                const char *sni = cwh_tls_get_sni_hostname(conn->tls_session);
+                if (sni)
+                {
+                    printf("[SERVER] TLS handshake complete, SNI: %s\n", sni);
+                }
+                if (cwh_tls_client_cert_verified(conn->tls_session))
+                {
+                    const char *subject = cwh_tls_get_client_cert_subject(conn->tls_session);
+                    printf("[SERVER] Client cert verified: %s\n", subject ? subject : "unknown");
+                }
+                conn->state = CONN_STATE_READING_REQUEST;
+            }
+            else if (tls_err != CWH_TLS_ERR_HANDSHAKE)
+            {
+                printf("[SERVER] TLS handshake failed: %s\n", cwh_tls_error_string(tls_err));
+                close_connection(conn);
+                return;
+            }
+        }
+        else
+#endif
+        {
+            conn->state = CONN_STATE_READING_REQUEST;
+        }
+        break;
+
     case CONN_STATE_READING_REQUEST:
         if (events & CWH_EVENT_READ)
         {

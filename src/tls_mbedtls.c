@@ -7,6 +7,7 @@
 
 #include "mbedtls/net_sockets.h"
 #include "mbedtls/ssl.h"
+#include "mbedtls/ssl_cache.h"
 #include "mbedtls/entropy.h"
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/error.h"
@@ -20,9 +21,11 @@ struct cwh_tls_context
     mbedtls_x509_crt cacert;
     mbedtls_x509_crt client_cert;
     mbedtls_pk_context client_key;
+    mbedtls_ssl_cache_context cache;
     cwh_tls_config_t config;
     bool has_cacert;
     bool has_client_cert;
+    bool has_cache;
 };
 
 // TLS session (per-connection)
@@ -33,6 +36,10 @@ struct cwh_tls_session
     cwh_tls_context_t *ctx;
     int socket_fd;
     char *hostname;
+    bool is_server;
+    char sni_hostname[256];
+    char client_cert_subject[512];
+    bool client_cert_verified;
 };
 
 // Error string mapping
@@ -136,6 +143,15 @@ cwh_tls_context_t *cwh_tls_context_new(const cwh_tls_config_t *config)
         }
     }
 
+    // Initialize session cache if enabled
+    ctx->has_cache = false;
+    if (config->session_cache)
+    {
+        mbedtls_ssl_cache_init(&ctx->cache);
+        mbedtls_ssl_cache_set_timeout(&ctx->cache, config->session_timeout);
+        ctx->has_cache = true;
+    }
+
     return ctx;
 }
 
@@ -156,6 +172,11 @@ void cwh_tls_context_free(cwh_tls_context_t *ctx)
     {
         mbedtls_x509_crt_free(&ctx->client_cert);
         mbedtls_pk_free(&ctx->client_key);
+    }
+
+    if (ctx->has_cache)
+    {
+        mbedtls_ssl_cache_free(&ctx->cache);
     }
 
     mbedtls_ctr_drbg_free(&ctx->ctr_drbg);
@@ -190,7 +211,20 @@ static int tls_net_recv(void *ctx, unsigned char *buf, size_t len)
     return ret;
 }
 
-// Create TLS session
+// SNI callback for server-side
+static int sni_callback(void *param, mbedtls_ssl_context *ssl,
+                        const unsigned char *hostname, size_t len)
+{
+    cwh_tls_session_t *session = (cwh_tls_session_t *)param;
+    if (session && hostname && len > 0 && len < sizeof(session->sni_hostname))
+    {
+        memcpy(session->sni_hostname, hostname, len);
+        session->sni_hostname[len] = '\0';
+    }
+    return 0;
+}
+
+// Create TLS session (client mode)
 cwh_tls_session_t *cwh_tls_session_new(cwh_tls_context_t *ctx, int socket_fd, const char *hostname)
 {
     if (!ctx || socket_fd < 0 || !hostname)
@@ -207,6 +241,11 @@ cwh_tls_session_t *cwh_tls_session_new(cwh_tls_context_t *ctx, int socket_fd, co
     session->ctx = ctx;
     session->socket_fd = socket_fd;
     session->hostname = strdup(hostname);
+    session->is_server = false;
+    session->sni_hostname[0] = '\0';
+    session->client_cert_subject[0] = '\0';
+    session->client_cert_verified = false;
+
     if (!session->hostname)
     {
         free(session);
@@ -277,6 +316,14 @@ cwh_tls_session_t *cwh_tls_session_new(cwh_tls_context_t *ctx, int socket_fd, co
     }
     mbedtls_ssl_conf_min_version(&session->conf, MBEDTLS_SSL_MAJOR_VERSION_3, min_version);
 
+    // Enable session cache for resumption
+    if (ctx->has_cache)
+    {
+        mbedtls_ssl_conf_session_cache(&session->conf, &ctx->cache,
+                                       mbedtls_ssl_cache_get,
+                                       mbedtls_ssl_cache_set);
+    }
+
     // Setup SSL context
     ret = mbedtls_ssl_setup(&session->ssl, &session->conf);
     if (ret != 0)
@@ -304,6 +351,117 @@ cleanup:
     return NULL;
 }
 
+// Create TLS session (server mode)
+cwh_tls_session_t *cwh_tls_session_new_server(cwh_tls_context_t *ctx, int socket_fd)
+{
+    if (!ctx || socket_fd < 0 || !ctx->has_client_cert)
+    {
+        return NULL;
+    }
+
+    cwh_tls_session_t *session = calloc(1, sizeof(cwh_tls_session_t));
+    if (!session)
+    {
+        return NULL;
+    }
+
+    session->ctx = ctx;
+    session->socket_fd = socket_fd;
+    session->hostname = NULL;
+    session->is_server = true;
+    session->sni_hostname[0] = '\0';
+    session->client_cert_subject[0] = '\0';
+    session->client_cert_verified = false;
+
+    // Initialize SSL structures
+    mbedtls_ssl_init(&session->ssl);
+    mbedtls_ssl_config_init(&session->conf);
+
+    int ret;
+
+    // Setup SSL configuration for server
+    ret = mbedtls_ssl_config_defaults(&session->conf,
+                                      MBEDTLS_SSL_IS_SERVER,
+                                      MBEDTLS_SSL_TRANSPORT_STREAM,
+                                      MBEDTLS_SSL_PRESET_DEFAULT);
+    if (ret != 0)
+    {
+        goto cleanup;
+    }
+
+    // Set RNG
+    mbedtls_ssl_conf_rng(&session->conf, mbedtls_ctr_drbg_random, &ctx->ctr_drbg);
+
+    // Set server certificate and key
+    ret = mbedtls_ssl_conf_own_cert(&session->conf, &ctx->client_cert, &ctx->client_key);
+    if (ret != 0)
+    {
+        goto cleanup;
+    }
+
+    // Set client certificate verification mode
+    if (ctx->config.require_client_cert)
+    {
+        mbedtls_ssl_conf_authmode(&session->conf, MBEDTLS_SSL_VERIFY_REQUIRED);
+        if (ctx->has_cacert)
+        {
+            mbedtls_ssl_conf_ca_chain(&session->conf, &ctx->cacert, NULL);
+        }
+    }
+    else
+    {
+        mbedtls_ssl_conf_authmode(&session->conf, MBEDTLS_SSL_VERIFY_NONE);
+    }
+
+    // Set minimum TLS version
+    int min_version = MBEDTLS_SSL_MINOR_VERSION_3;
+    switch (ctx->config.min_tls_version)
+    {
+    case 0:
+        min_version = MBEDTLS_SSL_MINOR_VERSION_1;
+        break;
+    case 1:
+        min_version = MBEDTLS_SSL_MINOR_VERSION_2;
+        break;
+    case 2:
+        min_version = MBEDTLS_SSL_MINOR_VERSION_3;
+        break;
+    case 3:
+        min_version = MBEDTLS_SSL_MINOR_VERSION_4;
+        break;
+    }
+    mbedtls_ssl_conf_min_version(&session->conf, MBEDTLS_SSL_MAJOR_VERSION_3, min_version);
+
+    // Enable session cache for resumption
+    if (ctx->has_cache)
+    {
+        mbedtls_ssl_conf_session_cache(&session->conf, &ctx->cache,
+                                       mbedtls_ssl_cache_get,
+                                       mbedtls_ssl_cache_set);
+    }
+
+    // Setup SSL context
+    ret = mbedtls_ssl_setup(&session->ssl, &session->conf);
+    if (ret != 0)
+    {
+        goto cleanup;
+    }
+
+    // Set SNI callback
+    mbedtls_ssl_conf_sni(&session->conf, sni_callback, session);
+
+    // Set I/O callbacks
+    mbedtls_ssl_set_bio(&session->ssl, &session->socket_fd, tls_net_send, tls_net_recv, NULL);
+
+    return session;
+
+cleanup:
+    mbedtls_ssl_config_free(&session->conf);
+    mbedtls_ssl_free(&session->ssl);
+    free(session);
+    return NULL;
+}
+
 // Perform TLS handshake
 cwh_tls_error_t cwh_tls_handshake(cwh_tls_session_t *session)
 {
@@ -326,7 +484,30 @@ cwh_tls_error_t cwh_tls_handshake(cwh_tls_session_t *session)
     }
 
     // Verify certificate (if required)
-    if (session->ctx->config.verify_peer)
+    if (session->is_server && session->ctx->config.require_client_cert)
+    {
+        const mbedtls_x509_crt *peer_cert = mbedtls_ssl_get_peer_cert(&session->ssl);
+        if (peer_cert)
+        {
+            uint32_t flags = mbedtls_ssl_get_verify_result(&session->ssl);
+            if (flags == 0)
+            {
+                session->client_cert_verified = true;
+                mbedtls_x509_dn_gets(session->client_cert_subject,
+                                     sizeof(session->client_cert_subject),
+                                     &peer_cert->subject);
+            }
+            else
+            {
+                return CWH_TLS_ERR_CERT;
+            }
+        }
+        else
+        {
+            return CWH_TLS_ERR_CERT;
+        }
+    }
+    else if (!session->is_server && session->ctx->config.verify_peer)
     {
         uint32_t flags = mbedtls_ssl_get_verify_result(&session->ssl);
         if (flags != 0)
@@ -378,6 +559,36 @@ int cwh_tls_write(cwh_tls_session_t *session, const void *buf, size_t len)
     return ret;
 }
 
+// Get SNI hostname (server-side)
+const char *cwh_tls_get_sni_hostname(cwh_tls_session_t *session)
+{
+    if (!session || !session->is_server)
+    {
+        return NULL;
+    }
+    return session->sni_hostname[0] ? session->sni_hostname : NULL;
+}
+
+// Check if client certificate was verified (server-side)
+bool cwh_tls_client_cert_verified(cwh_tls_session_t *session)
+{
+    if (!session || !session->is_server)
+    {
+        return false;
+    }
+    return session->client_cert_verified;
+}
+
+// Get client certificate subject (server-side)
+const char *cwh_tls_get_client_cert_subject(cwh_tls_session_t *session)
+{
+    if (!session || !session->is_server || !session->client_cert_verified)
+    {
+        return NULL;
+    }
+    return session->client_cert_subject[0] ? session->client_cert_subject : NULL;
+}
+
 // Free TLS session
 void cwh_tls_session_free(cwh_tls_session_t *session)
 {
@@ -425,6 +636,13 @@ cwh_tls_session_t *cwh_tls_session_new(cwh_tls_context_t *ctx, int socket_fd, co
     return NULL;
 }
 
+cwh_tls_session_t *cwh_tls_session_new_server(cwh_tls_context_t *ctx, int socket_fd)
+{
+    (void)ctx;
+    (void)socket_fd;
+    return NULL;
+}
+
 cwh_tls_error_t cwh_tls_handshake(cwh_tls_session_t *session)
 {
     (void)session;
@@ -445,6 +663,24 @@ int cwh_tls_write(cwh_tls_session_t *session, const void *buf, size_t len)
     (void)buf;
     (void)len;
     return -1;
+}
+
+const char *cwh_tls_get_sni_hostname(cwh_tls_session_t *session)
+{
+    (void)session;
+    return NULL;
+}
+
+bool cwh_tls_client_cert_verified(cwh_tls_session_t *session)
+{
+    (void)session;
+    return false;
+}
+
+const char *cwh_tls_get_client_cert_subject(cwh_tls_session_t *session)
+{
+    (void)session;
+    return NULL;
 }
 
 void cwh_tls_session_free(cwh_tls_session_t *session)
