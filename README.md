@@ -5,11 +5,14 @@
 Молниеносно быстрая альтернатива libcurl для проектов, где критичны размер исполняемого файла и производительность.
 
 [![CI](https://github.com/ilyabrin/cwebhttp/actions/workflows/ci.yml/badge.svg)](https://github.com/ilyabrin/cwebhttp/actions)
-![Version](https://img.shields.io/badge/version-0.7.0-blue)
+[![TLS CI](https://github.com/ilyabrin/cwebhttp/actions/workflows/tls-ci.yml/badge.svg)](https://github.com/ilyabrin/cwebhttp/actions)
+![Version](https://img.shields.io/badge/version-0.9.0--dev-blue)
 ![C11](https://img.shields.io/badge/C-11-blue)
-![Size](https://img.shields.io/badge/size-~68KB-green)
-![Tests](https://img.shields.io/badge/tests-53%20passing-brightgreen)
+![Size](https://img.shields.io/badge/size-~155KB%20(with%20TLS%20%2B%20WebSocket)-green)
+![Tests](https://img.shields.io/badge/tests-77%20passing-brightgreen)
 ![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-blue)
+![TLS](https://img.shields.io/badge/TLS-1.2%2F1.3-green)
+![WebSocket](https://img.shields.io/badge/WebSocket-RFC%206455-blue)
 
 ## 🎯 Цель Проекта
 
@@ -21,7 +24,35 @@
 - 📦 **Простота**: Один .h + один .c файл - включи и работай
 - 🌍 **Кроссплатформенность**: Windows, Linux, macOS, *BSD
 
-## ✅ Текущий Статус (v0.7.0)
+## ✅ Текущий Статус (v0.9.0-dev)
+
+**Phase 6: WebSocket Support - 100% COMPLETE** ✅ 🔌
+
+### WebSocket (Phase 6.1) ✅ **COMPLETE - Dec 20, 2025**
+
+- [x] **Full RFC 6455 Compliance** - Text, binary, control frames
+- [x] **Client & Server Handshake** - Automatic upgrade handling
+- [x] **Fragmentation Support** - Large messages (up to 10MB)
+- [x] **Ping/Pong Heartbeat** - Connection keep-alive
+- [x] **Clean Close Handshake** - With status codes
+- [x] **14 Comprehensive Tests** - All passing ✅
+- [x] **Real-World Examples:**
+  - [x] **Chat Server** - Multi-user chat room with JSON protocol
+  - [x] **Real-Time Dashboard** - Live system metrics streaming
+- [x] **Zero-Copy Parsing** - Minimal overhead (~5KB binary increase)
+
+**Phase 3: TLS/SSL Support - 100% COMPLETE** ✅ 🔒
+
+### TLS (Phase 3) ✅ **COMPLETE - Dec 19, 2025**
+
+- [x] **mbedTLS Integration** - Lightweight TLS backend (~150KB)
+- [x] **HTTPS Client** - Full client-side TLS support
+- [x] **HTTPS Server** - Production-ready async HTTPS server
+- [x] **SNI Support** - Server Name Indication (multi-domain capable)
+- [x] **Session Resumption** - 75% faster reconnections
+- [x] **Client Certificate Auth** - Mutual TLS (mTLS) support
+- [x] **CI/CD Pipeline** - Automated TLS testing on all platforms
+- [x] **Performance Benchmarks** - Documented throughput and latency
 
 **Phase 1: HTTP/1.1 Foundation - COMPLETE** ✨
 
@@ -273,14 +304,24 @@ Test coverage:
 
 ## 📖 Documentation
 
-- [DOCUMENTATION.md](DOCUMENTATION.md) - Complete technical documentation
+**[DOCUMENTATION.md](DOCUMENTATION.md)** - Complete guide (all features merged: HTTP, WebSocket, TLS, IoT)
+
 - [CHANGELOG.md](CHANGELOG.md) - Version history and release notes
-- Examples:
-  - `examples/simple_client.c` - HTTP client usage (`cwh_get`, `cwh_post`, etc.)
-  - `examples/hello_server.c` - REST API server with routing
-  - `examples/file_server.c` - Static file server with Range support
-  - `examples/async_server.c` - Async HTTP server with routing
-  - `examples/async_client.c` - Async HTTP client
+- [ROADMAP.md](ROADMAP.md) - Development roadmap (for developers)
+
+### Examples
+
+- `examples/simple_client.c` - HTTP client usage (`cwh_get`, `cwh_post`, etc.)
+- `examples/hello_server.c` - REST API server with routing
+- `examples/file_server.c` - Static file server with Range support
+- `examples/async_server.c` - Async HTTP server with routing
+- `examples/async_client.c` - Async HTTP client
+- `examples/memcheck_demo.c` - Memory leak detection demo 🆕
+- `examples/json_api_server.c` - RESTful JSON API server 🆕
+- `examples/static_file_server.c` - Advanced static file serving 🆕
+- `examples/benchmark_client.c` - HTTP load testing tool 🆕
+- `examples/ws_chat_server.c` - WebSocket chat room (multi-user) 🆕
+- `examples/ws_dashboard.c` - Real-time metrics dashboard 🆕
 
 ## 🛠 Technical Details
 
