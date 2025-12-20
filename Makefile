@@ -15,11 +15,11 @@ endif
 
 # OS detection
 ifeq ($(OS),Windows_NT)
-	# Windows - Always use Unix-style commands (works in MSYS2/MinGW and Git Bash)
+	# Windows - Use PowerShell commands
 	CFLAGS += -D_WIN32
 	LDFLAGS = -lws2_32 -lz $(TLS_LDFLAGS)
-	MKDIR = mkdir -p $(1)
-	RM = rm -rf build
+	MKDIR = powershell -Command "New-Item -ItemType Directory -Force -Path $(1) | Out-Null"
+	RM = powershell -Command "if (Test-Path build) { Remove-Item -Recurse -Force build }"
 	EXE_EXT = .exe
 	RUN_TEST = ./build/tests/$(1).exe
 else
