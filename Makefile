@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -std=gnu17 -O2 -Iinclude -Itests
-SRCS = src/cwebhttp.c src/memcheck.c src/log.c src/error.c
+SRCS = src/cwebhttp.c src/memcheck.c src/log.c src/error.c src/websocket.c
 ASYNC_SRCS = src/async/loop.c src/async/epoll.c src/async/kqueue.c src/async/iocp.c src/async/wsapoll.c src/async/select.c src/async/nonblock.c src/async/client.c src/async/server.c
 
 # TLS support (optional, compile with ENABLE_TLS=1)
@@ -34,15 +34,16 @@ endif
 
 all: examples build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT) build/tests/test_chunked$(EXE_EXT)
 
-examples: build/examples/minimal_server$(EXE_EXT) build/examples/simple_client$(EXE_EXT) build/examples/hello_server$(EXE_EXT) build/examples/file_server$(EXE_EXT) build/examples/async_client$(EXE_EXT) build/examples/async_server$(EXE_EXT) build/examples/async_client_pool$(EXE_EXT) build/examples/memcheck_demo$(EXE_EXT) build/examples/logging_demo$(EXE_EXT) build/examples/json_api_server$(EXE_EXT) build/examples/static_file_server$(EXE_EXT) build/examples/benchmark_client$(EXE_EXT) build/examples/error_handling_demo$(EXE_EXT)
+examples: build/examples/minimal_server$(EXE_EXT) build/examples/simple_client$(EXE_EXT) build/examples/hello_server$(EXE_EXT) build/examples/file_server$(EXE_EXT) build/examples/async_client$(EXE_EXT) build/examples/async_server$(EXE_EXT) build/examples/async_client_pool$(EXE_EXT) build/examples/memcheck_demo$(EXE_EXT) build/examples/logging_demo$(EXE_EXT) build/examples/json_api_server$(EXE_EXT) build/examples/static_file_server$(EXE_EXT) build/examples/benchmark_client$(EXE_EXT) build/examples/error_handling_demo$(EXE_EXT) build/examples/ws_chat_server$(EXE_EXT) build/examples/ws_dashboard$(EXE_EXT)
 
 benchmarks: build/benchmarks/bench_parser$(EXE_EXT) build/benchmarks/bench_memory$(EXE_EXT) build/benchmarks/minimal_example$(EXE_EXT) build/benchmarks/bench_c10k$(EXE_EXT) build/benchmarks/bench_latency$(EXE_EXT) build/benchmarks/bench_async_throughput$(EXE_EXT)
 
-test: build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT) build/tests/test_chunked$(EXE_EXT) build/tests/test_memcheck$(EXE_EXT)
+test: build/tests/test_parse$(EXE_EXT) build/tests/test_url$(EXE_EXT) build/tests/test_chunked$(EXE_EXT) build/tests/test_memcheck$(EXE_EXT) build/tests/test_websocket$(EXE_EXT)
 	$(call RUN_TEST,test_parse)
 	$(call RUN_TEST,test_url)
 	$(call RUN_TEST,test_chunked)
 	$(call RUN_TEST,test_memcheck)
+	$(call RUN_TEST,test_websocket)
 
 integration: build/tests/test_integration$(EXE_EXT)
 	@echo "Running integration tests (requires internet connection)..."
@@ -164,6 +165,19 @@ build/examples/async_client_pool$(EXE_EXT): examples/async_client_pool.c $(SRCS)
 
 build/test_iocp_server$(EXE_EXT): test_iocp_server.c $(SRCS) $(ASYNC_SRCS)
 	@$(call MKDIR,build)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+# WebSocket support targets
+build/tests/test_websocket$(EXE_EXT): tests/test_websocket.c $(SRCS)
+	@$(call MKDIR,build/tests)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+build/examples/ws_chat_server$(EXE_EXT): examples/ws_chat_server.c $(SRCS)
+	@$(call MKDIR,build/examples)
+	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+build/examples/ws_dashboard$(EXE_EXT): examples/ws_dashboard.c $(SRCS)
+	@$(call MKDIR,build/examples)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
 
 # TLS support targets
