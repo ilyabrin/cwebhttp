@@ -22,6 +22,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Server push
 - HPACK compression
 
+## [0.7.2] - 2025-12-18
+
+### Added - Examples & macOS Testing 📚
+
+**New Examples:**
+
+- `examples/json_api_server.c` - RESTful JSON API server with multiple endpoints
+  - GET /api/users - list all users
+  - GET /api/users/:id - get user by ID
+  - GET /api/status - server status endpoint
+  - Demonstrates JSON responses and RESTful routing
+- `examples/static_file_server.c` - Advanced static file serving
+  - Content-Type detection (20+ MIME types)
+  - Directory listing with HTML
+  - Security checks (no path traversal)
+  - Serves files from www/ directory
+- `examples/benchmark_client.c` - HTTP load testing tool
+  - Concurrent async requests with configurable concurrency
+  - Latency measurement (min/max/avg)
+  - Throughput calculation (req/s)
+  - Progress reporting
+
+**Testing:**
+
+- `scripts/test_macos_async_server.sh` - macOS async server test suite
+  - Validates kqueue backend functionality
+  - Tests simple GET requests
+  - Tests concurrent connections (100 requests)
+  - Tests Keep-Alive support
+  - Automated server startup/shutdown
+
+**Documentation:**
+
+- Updated README.md with new example descriptions
+- Updated ROADMAP.md to mark examples and testing as complete
+
+### Fixed
+
+- Makefile Windows compatibility improvements for mkdir command
+- All 3 new examples build successfully on Windows, Linux, and macOS
+
 ## [0.7.0] - 2025-12-17
 
 ### Added - Windows IOCP Async Server 🪟 **PHASE 2 COMPLETE**
