@@ -74,6 +74,8 @@ static int set_nonblocking(int fd)
 // Connection Pool for Keep-Alive Support
 // ============================================================================
 
+#if CWEBHTTP_ENABLE_CONNECTION_POOL
+
 #define CWH_POOL_MAX_IDLE_TIME 60   // Close connections idle for 60 seconds
 #define CWH_POOL_MAX_CONNECTIONS 10 // Maximum pooled connections
 
@@ -200,6 +202,8 @@ void cwh_pool_cleanup(void)
     g_pool_size = 0;
 }
 
+#endif // CWEBHTTP_ENABLE_CONNECTION_POOL
+
 // ============================================================================
 // End Connection Pool
 // ============================================================================
@@ -207,6 +211,8 @@ void cwh_pool_cleanup(void)
 // ============================================================================
 // Cookie Jar Implementation
 // ============================================================================
+
+#if CWEBHTTP_ENABLE_COOKIES
 
 static cwh_cookie_t *g_cookie_jar = NULL; // Global cookie jar (linked list)
 
@@ -485,6 +491,8 @@ char *cwh_cookie_jar_get(const char *domain, const char *path)
     return cwh_strdup(cookie_str);
 }
 
+#endif // CWEBHTTP_ENABLE_COOKIES
+
 // ============================================================================
 // End Cookie Jar
 // ============================================================================
@@ -527,6 +535,7 @@ cwh_conn_t *cwh_connect(const char *url, int timeout_ms)
 
     snprintf(port_str, sizeof(port_str), "%d", parsed.port);
 
+#if CWEBHTTP_ENABLE_CONNECTION_POOL
     // Try to get an existing connection from the pool
     cwh_conn_t *conn = cwh_pool_get(host, parsed.port);
     if (conn)
@@ -534,6 +543,9 @@ cwh_conn_t *cwh_connect(const char *url, int timeout_ms)
         // Found a pooled connection - reuse it
         return conn;
     }
+#else
+    cwh_conn_t *conn = NULL;
+#endif
 
     // No pooled connection available - create a new one
 
@@ -837,10 +849,13 @@ cwh_error_t cwh_send_req(cwh_conn_t *conn, cwh_method_t method, const char *path
     offset += snprintf(req_buf + offset, sizeof(req_buf) - offset,
                        "Connection: keep-alive\r\n");
 
+#if CWEBHTTP_ENABLE_COMPRESSION
     // Accept-Encoding header (indicate support for gzip and deflate compression)
     offset += snprintf(req_buf + offset, sizeof(req_buf) - offset,
                        "Accept-Encoding: gzip, deflate\r\n");
+#endif
 
+#if CWEBHTTP_ENABLE_COOKIES
     // Cookie header (automatic cookie management)
     char *cookies = cwh_cookie_jar_get(conn->host, path);
     if (cookies)
@@ -849,6 +864,7 @@ cwh_error_t cwh_send_req(cwh_conn_t *conn, cwh_method_t method, const char *path
                            "Cookie: %s\r\n", cookies);
         free(cookies);
     }
+#endif
 
     // Additional headers
     if (headers)
@@ -922,6 +938,7 @@ cwh_error_t cwh_read_res(cwh_conn_t *conn, cwh_response_t *res)
         conn->keep_alive = true;
     }
 
+#if CWEBHTTP_ENABLE_COOKIES
     // Process Set-Cookie headers (automatic cookie management)
     // Note: HTTP allows multiple Set-Cookie headers, so we need to check all headers
     for (size_t i = 0; i < res->num_headers * 2; i += 2)
@@ -934,14 +951,31 @@ cwh_error_t cwh_read_res(cwh_conn_t *conn, cwh_response_t *res)
             }
         }
     }
+#endif
 
     return CWH_OK;
 }
 
 void cwh_close(cwh_conn_t *conn)
 {
+#if CWEBHTTP_ENABLE_CONNECTION_POOL
     // Delegate to connection pool - it will decide whether to pool or close
     cwh_pool_return(conn);
+#else
+    // No connection pool - just close the connection
+    if (!conn)
+        return;
+#if CWEBHTTP_ENABLE_TLS
+    if (conn->tls_session)
+        cwh_tls_session_free(conn->tls_session);
+    if (conn->tls_ctx)
+        cwh_tls_context_free(conn->tls_ctx);
+#endif
+    if (conn->fd >= 0)
+        CLOSE_SOCKET(conn->fd);
+    free(conn->host);
+    free(conn);
+#endif
 }
 
 // Helper: skip whitespace
@@ -1255,6 +1289,7 @@ cwh_error_t cwh_parse_res(const char *buf, size_t len, cwh_response_t *res)
         res->body = (char *)p;
         res->body_len = end - p;
 
+#if CWEBHTTP_ENABLE_CHUNKED
         // Check if Transfer-Encoding: chunked
         const char *transfer_encoding = cwh_get_res_header(res, "Transfer-Encoding");
         if (transfer_encoding && strncasecmp(transfer_encoding, "chunked", 7) == 0)
@@ -1275,7 +1310,9 @@ cwh_error_t cwh_parse_res(const char *buf, size_t len, cwh_response_t *res)
             }
             // If decode fails, keep original chunked body (graceful degradation)
         }
+#endif
 
+#if CWEBHTTP_ENABLE_COMPRESSION
         // Check if Content-Encoding is present (gzip/deflate compression)
         const char *content_encoding = cwh_get_res_header(res, "Content-Encoding");
         if (content_encoding)
@@ -1303,6 +1340,7 @@ cwh_error_t cwh_parse_res(const char *buf, size_t len, cwh_response_t *res)
             }
             // If decompression fails, keep original compressed body (graceful degradation)
         }
+#endif
     }
 
     return CWH_OK;
@@ -1583,6 +1621,8 @@ cwh_error_t cwh_parse_url(const char *url, size_t len, cwh_url_t *parsed)
     return CWH_OK;
 }
 
+#if CWEBHTTP_ENABLE_CHUNKED
+
 // ============================================================================
 // Chunked Transfer Encoding (RFC 7230 Section 4.1)
 // ============================================================================
@@ -1706,9 +1746,13 @@ cwh_error_t cwh_encode_chunked(const char *body, size_t body_len,
     return CWH_OK;
 }
 
+#endif // CWEBHTTP_ENABLE_CHUNKED
+
 // ============================================================================
 // Response Decompression (gzip/deflate)
 // ============================================================================
+
+#if CWEBHTTP_ENABLE_COMPRESSION
 
 // Decompress gzip-compressed data
 // gzip uses zlib with gzip header (window bits = 15 + 16)
@@ -1775,6 +1819,8 @@ cwh_error_t cwh_decompress_deflate(const char *compressed, size_t compressed_len
     inflateEnd(&stream);
     return CWH_OK;
 }
+
+#endif // CWEBHTTP_ENABLE_COMPRESSION
 
 // ============================================================================
 // HTTP/1.1 Server Implementation
