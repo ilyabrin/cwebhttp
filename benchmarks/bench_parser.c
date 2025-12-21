@@ -9,7 +9,21 @@
 
 #if defined(_WIN32) || defined(_WIN64)
 #include <windows.h>
-#define GET_TIME_MS() ((double)GetTickCount())
+static double GET_TIME_MS()
+{
+    static LARGE_INTEGER frequency;
+    static int initialized = 0;
+
+    if (!initialized)
+    {
+        QueryPerformanceFrequency(&frequency);
+        initialized = 1;
+    }
+
+    LARGE_INTEGER counter;
+    QueryPerformanceCounter(&counter);
+    return (double)(counter.QuadPart * 1000.0) / frequency.QuadPart;
+}
 #else
 #include <sys/time.h>
 static double GET_TIME_MS()
@@ -43,16 +57,18 @@ static double bench_memcpy(const char *data, size_t len, int iterations)
 
     double start = GET_TIME_MS();
 
+    volatile char dummy = 0;
     for (int i = 0; i < iterations; i++)
     {
         memcpy(buf, data, len);
+        dummy += buf[0]; // Prevent optimization
     }
 
     double elapsed = GET_TIME_MS() - start;
     free(buf);
 
     double mb_processed = (len * iterations) / (1024.0 * 1024.0);
-    return mb_processed / (elapsed / 1000.0); // MB/s
+    return (elapsed > 0) ? mb_processed / (elapsed / 1000.0) : 0.0; // MB/s
 }
 
 // Benchmark cwebhttp parser
@@ -78,7 +94,7 @@ static double bench_cwebhttp(const char *data, size_t len, int iterations)
     free(buf);
 
     double mb_processed = (len * iterations) / (1024.0 * 1024.0);
-    return mb_processed / (elapsed / 1000.0); // MB/s
+    return (elapsed > 0) ? mb_processed / (elapsed / 1000.0) : 0.0; // MB/s
 }
 
 // Benchmark response parsing
@@ -115,7 +131,7 @@ static double bench_cwebhttp_response(int iterations)
     free(buf);
 
     double mb_processed = (len * iterations) / (1024.0 * 1024.0);
-    return mb_processed / (elapsed / 1000.0); // MB/s
+    return (elapsed > 0) ? mb_processed / (elapsed / 1000.0) : 0.0; // MB/s
 }
 
 int main(void)
@@ -144,8 +160,9 @@ int main(void)
            response_speed, (response_speed / memcpy_speed) * 100.0);
 
     printf("\n");
-    printf("Requests parsed per second: %.0f req/s\n",
-           (iterations / ((GET_TIME_MS() - GET_TIME_MS() + 1000.0) / 1000.0)) * (request_speed / memcpy_speed));
+    double total_time_sec = (response_speed > 0) ? ((req_len * iterations) / (1024.0 * 1024.0)) / request_speed : 0;
+    double req_per_sec = (total_time_sec > 0) ? iterations / total_time_sec : 0;
+    printf("Requests parsed per second: %.0f req/s\n", req_per_sec);
 
     printf("\nParser efficiency: %.1f%% of theoretical maximum\n",
            ((request_speed + response_speed) / 2.0 / memcpy_speed) * 100.0);
