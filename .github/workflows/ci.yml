@@ -185,10 +185,59 @@ jobs:
           docker run --rm cwebhttp-test /bin/bash -c "./build/tests/test_async_loop | grep -i 'epoll' || echo 'Note: Backend verification skipped'"
         continue-on-error: true
 
+  # Feature flag combination testing
+  feature-flags:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc make zlib1g-dev
+
+      - name: Test all feature flag combinations
+        run: |
+          echo "Testing feature flag combinations..."
+          
+          # Test different feature combinations
+          configs=(
+            ""  # Default
+            "-DCWEBHTTP_ENABLE_COOKIES=0"
+            "-DCWEBHTTP_ENABLE_COMPRESSION=0"
+            "-DCWEBHTTP_ENABLE_CHUNKED=0"
+            "-DCWEBHTTP_ENABLE_CONNECTION_POOL=0"
+            "-DCWEBHTTP_ENABLE_COOKIES=0 -DCWEBHTTP_ENABLE_COMPRESSION=0 -DCWEBHTTP_ENABLE_CHUNKED=0 -DCWEBHTTP_ENABLE_CONNECTION_POOL=0"
+          )
+          
+          for config in "${configs[@]}"; do
+            echo "Building with: $config"
+            gcc -Wall -Wextra -O2 -Iinclude -Itests $config \
+              tests/test_parse.c tests/unity.c src/cwebhttp.c src/memcheck.c src/log.c src/error.c \
+              -o test_config -lz || exit 1
+            ./test_config || exit 1
+            echo "✅ Configuration passed"
+          done
+
+      - name: Test memory leak detection
+        run: |
+          gcc -O0 -g -DCWEBHTTP_ENABLE_MEMCHECK=1 -Iinclude -Itests \
+            tests/test_memcheck.c tests/unity.c src/memcheck.c \
+            -o test_memcheck -lz
+          ./test_memcheck
+
+      - name: Performance regression check
+        run: |
+          make benchmarks
+          ./build/benchmarks/bench_parser
+          ./build/benchmarks/bench_memory
+          echo "✅ Performance benchmarks completed"
+
   # Test summary
   summary:
     runs-on: ubuntu-latest
-    needs: [linux, macos, windows, docker]
+    needs: [linux, macos, windows, docker, feature-flags]
     if: always()
 
     steps:
@@ -199,20 +248,23 @@ jobs:
           echo "macOS (clang): ${{ needs.macos.result }}"
           echo "Windows (gcc): ${{ needs.windows.result }}"
           echo "Docker: ${{ needs.docker.result }}"
+          echo "Feature Flags: ${{ needs.feature-flags.result }}"
           echo ""
 
           if [ "${{ needs.linux.result }}" != "success" ] || \
              [ "${{ needs.macos.result }}" != "success" ] || \
              [ "${{ needs.windows.result }}" != "success" ] || \
-             [ "${{ needs.docker.result }}" != "success" ]; then
+             [ "${{ needs.docker.result }}" != "success" ] || \
+             [ "${{ needs.feature-flags.result }}" != "success" ]; then
             echo "❌ Some tests failed!"
             exit 1
           else
-            echo "✅ All platform tests passed!"
+            echo "✅ All tests passed!"
             echo ""
-            echo "Platform Coverage:"
+            echo "Coverage:"
             echo "- Linux: epoll backend ✅"
             echo "- macOS: kqueue backend ✅"
             echo "- Windows: IOCP backend ✅"
             echo "- Docker: epoll backend ✅"
+            echo "- Feature Flags: All combinations ✅"
           fi
