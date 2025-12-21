@@ -1,6 +1,9 @@
 #ifndef CWEBHTTP_H
 #define CWEBHTTP_H
 
+// Include feature configuration
+#include "cwebhttp_config.h"
+
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -8,7 +11,7 @@
 #include <time.h>   // for time_t in cookie expiration
 
 // Версия
-#define CWEBHTTP_VERSION "0.1.0"
+#define CWEBHTTP_VERSION "0.9.0"
 
 // Ошибки
 typedef enum
@@ -86,6 +89,7 @@ typedef struct cwh_conn
     struct cwh_conn *next;               // For connection pool linked list
 } cwh_conn_t;
 
+#if CWEBHTTP_ENABLE_COOKIES
 // Cookie structure for cookie jar
 typedef struct cwh_cookie
 {
@@ -98,6 +102,7 @@ typedef struct cwh_cookie
     bool http_only;          // HttpOnly flag (no JavaScript access)
     struct cwh_cookie *next; // Linked list
 } cwh_cookie_t;
+#endif
 
 // Клиент API
 cwh_conn_t *cwh_connect(const char *url, int timeout_ms);
@@ -105,17 +110,21 @@ cwh_error_t cwh_send_req(cwh_conn_t *conn, cwh_method_t method, const char *path
 cwh_error_t cwh_read_res(cwh_conn_t *conn, cwh_response_t *res);
 void cwh_close(cwh_conn_t *conn);
 
+#if CWEBHTTP_ENABLE_CONNECTION_POOL
 // Connection pool API (for keep-alive support)
 void cwh_pool_init(void);                             // Initialize connection pool
 void cwh_pool_cleanup(void);                          // Cleanup all pooled connections
 void cwh_pool_return(cwh_conn_t *conn);               // Return connection to pool or close it
 cwh_conn_t *cwh_pool_get(const char *host, int port); // Get connection from pool
+#endif
 
+#if CWEBHTTP_ENABLE_COOKIES
 // Cookie jar API (for automatic cookie management)
 void cwh_cookie_jar_init(void);                                             // Initialize cookie jar
 void cwh_cookie_jar_cleanup(void);                                          // Free all cookies
 void cwh_cookie_jar_add(const char *domain, const char *set_cookie_header); // Add cookie from Set-Cookie header
 char *cwh_cookie_jar_get(const char *domain, const char *path);             // Get cookies for domain/path (returns allocated string)
+#endif
 
 // Сервер API (пока sync, async потом)
 typedef cwh_error_t (*cwh_handler_t)(cwh_request_t *req, cwh_conn_t *conn, void *user_data);
@@ -149,13 +158,17 @@ const char *cwh_get_res_header(const cwh_response_t *res, const char *key);
 // URL parsing (zero-alloc)
 cwh_error_t cwh_parse_url(const char *url, size_t len, cwh_url_t *parsed);
 
+#if CWEBHTTP_ENABLE_CHUNKED
 // Chunked transfer encoding (RFC 7230 Section 4.1)
 cwh_error_t cwh_decode_chunked(const char *chunked_body, size_t chunked_len, char *out_buf, size_t *out_len);
 cwh_error_t cwh_encode_chunked(const char *body, size_t body_len, char *out_buf, size_t *out_len);
+#endif
 
+#if CWEBHTTP_ENABLE_COMPRESSION
 // Response decompression (gzip/deflate)
 cwh_error_t cwh_decompress_gzip(const char *compressed, size_t compressed_len, char *out_buf, size_t *out_len);
 cwh_error_t cwh_decompress_deflate(const char *compressed, size_t compressed_len, char *out_buf, size_t *out_len);
+#endif
 
 // High-level convenience API (one-liners for simple requests)
 cwh_error_t cwh_get(const char *url, cwh_response_t *res);

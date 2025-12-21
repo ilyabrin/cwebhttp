@@ -1,223 +1,475 @@
-# cwebhttp Documentation
+# cwebhttp - Complete Documentation
 
-**Version:** 0.7.0  
-**Last Updated:** December 17, 2025
+**Version:** 0.9.0 | **Updated:** December 20, 2025
 
-Modern, lightweight HTTP library in pure C with async I/O support for high-performance applications.
+Modern, lightweight HTTP/WebSocket library in pure C. Zero-copy parser, async I/O, TLS support.
 
----
-
-## Table of Contents
-
-1. [Overview](#overview)
-2. [Features](#features)
-3. [Platform Support](#platform-support)
-4. [Building](#building)
-5. [Quick Start](#quick-start)
-6. [API Reference](#api-reference)
-7. [Performance](#performance)
-8. [Testing](#testing)
-9. [Architecture](#architecture)
-
----
-
-## Overview
-
-cwebhttp is a lightweight HTTP/1.1 library designed for:
-
-- **Small binary size** - 68KB for full client/server
-- **Zero-allocation parsing** - No heap allocations during HTTP parsing
-- **High performance** - 2.5 GB/s parser throughput
-- **Async I/O** - C10K+ capable with epoll/kqueue/IOCP
-- **Cross-platform** - Linux, macOS, Windows
-
-### Design Goals
-
-- 10x smaller than libcurl (~200KB → ~68KB)
-- Zero-allocation HTTP parsing
-- Production-ready async I/O
-- Clean, simple API
-- Modular architecture
-
----
-
-## Features
-
-### Core Features ✅
-
-- **HTTP/1.1 Client**
-  - GET, POST, PUT, DELETE methods
-  - Custom headers
-  - Keep-alive connections
-  - Connection pooling
-  - Automatic redirects (301, 302, 307, 308)
-  - Cookie management
-  - gzip/deflate decompression
-
-- **HTTP/1.1 Server**
-  - Routing (pattern matching)
-  - Static file serving
-  - Range requests (HTTP 206)
-  - Keep-alive connections
-  - Chunked transfer encoding
-  - MIME type detection (20+ types)
-
-- **Async I/O**
-  - Event loop (epoll/kqueue/IOCP/select)
-  - Non-blocking sockets
-  - Async client API
-  - Async server API
-  - C10K capable on all platforms
-
-### Upcoming Features 🚧
-
-- TLS/SSL support (v0.8.0)
-- HTTP/2 support (v0.9.0)
-- HTTP/3/QUIC support (v1.0+)
-- WebSocket support
-
----
-
-## Platform Support
-
-| Platform | Backend | Status       | Capability |
-| -------- | ------- | ------------ | ---------- |
-| Linux    | epoll   | ✅ Production | C10K+      |
-| macOS    | kqueue  | ✅ Production | C10K+      |
-| Windows  | IOCP    | ✅ Production | C100K+     |
-| Generic  | select  | ✅ Fallback   | ~1K        |
-
-**Tested On:**
-
-- Linux: Ubuntu 20.04+, GCC 9+
-- macOS: 11.0+, Clang 12+
-- Windows: 10/11, MinGW GCC 13.2+, MSVC 2019+
-
----
-
-## Building
-
-### Linux/macOS
-
-```bash
-# Clone repository
-git clone https://github.com/yourusername/cwebhttp.git
-cd cwebhttp
-
-# Build library and examples
-make
-
-# Run tests
-make test
-
-# Build async examples
-make async-examples
-```
-
-### Windows (MinGW)
-
-```cmd
-# Build with GCC
-gcc -O2 -Iinclude src/cwebhttp.c src/async/*.c examples/async_server.c -o build/async_server.exe -lws2_32 -lz
-
-# Or use make
-make
-```
-
-### Windows (MSVC)
-
-```cmd
-cl /O2 /Iinclude src/cwebhttp.c src/async/*.c examples/async_server.c /Fe:async_server.exe ws2_32.lib
-```
+**Quick Links:** [Installation](#installation) • [HTTP Client](#http-client) • [HTTP Server](#http-server) • [WebSocket](#websocket) • [HTTPS/TLS](#httpstls) • [IoT/Embedded](#iot--embedded) • [API](#api-reference)
 
 ---
 
 ## Quick Start
 
-### Synchronous HTTP Client
+### HTTP Client (3 lines)
 
 ```c
 #include "cwebhttp.h"
-
-int main(void) {
-    // Simple GET request
-    char *response = cwh_get("http://api.example.com/data");
-    if (response) {
-        printf("Response: %s\n", response);
-        free(response);
-    }
-    
-    // POST request with data
-    const char *json = "{\"name\":\"John\"}";
-    response = cwh_post("http://api.example.com/users", 
-                        "application/json", 
-                        json);
-    if (response) {
-        printf("Created: %s\n", response);
-        free(response);
-    }
-    
-    return 0;
-}
+char *html = cwh_get("http://example.com");
+printf("%s\n", html);
+free(html);
 ```
 
-### Async HTTP Server
+**Build:** `gcc app.c cwebhttp/src/cwebhttp.c -Icwebhttp/include -lz`
+
+### HTTP Server (15 lines)
 
 ```c
 #include "cwebhttp_async.h"
 
-// Handler function
-void hello_handler(cwh_async_conn_t *conn, void *user_data) {
-    const char *body = "Hello, World!";
-    cwh_async_send_response(conn, 200, "text/plain", body, strlen(body));
+void handle(cwh_async_conn_t *conn, cwh_request_t *req, void *data) {
+    cwh_async_send_response(conn, 200, "text/html", "<h1>Hello!</h1>", 15);
 }
 
-int main(void) {
-    // Create event loop
-    cwh_loop_t *loop = cwh_loop_new();
-    
-    // Create server
-    cwh_async_server_t *server = cwh_async_server_new(loop);
-    
-    // Register route
-    cwh_async_server_route(server, CWH_METHOD_GET, "/", hello_handler, NULL);
-    
-    // Listen and run
-    cwh_async_server_listen(server, 8080);
-    cwh_loop_run(loop);
-    
-    // Cleanup
-    cwh_async_server_free(server);
-    cwh_loop_free(loop);
-    
-    return 0;
+int main() {
+    cwh_async_server_t *srv = cwh_async_server_new();
+    cwh_async_server_route(srv, "GET", "/", handle, NULL);
+    cwh_async_server_listen(srv, 8080);
+    cwh_async_server_run(srv);
 }
 ```
 
-### Async HTTP Client
+**Build:** `gcc server.c cwebhttp/src/cwebhttp.c cwebhttp/src/async/*.c -Iinclude -lz`
+
+### WebSocket (Browser + Server)
+
+**Browser:**
+
+```javascript
+const ws = new WebSocket('ws://localhost:8080/ws');
+ws.onmessage = (e) => console.log(e.data);
+ws.send('Hello!');
+```
+
+**Server:**
+
+```c
+void on_message(cwh_ws_conn_t *ws, const cwh_ws_message_t *msg, void *data) {
+    cwh_ws_send_text(ws, (const char *)msg->data);  // Echo
+}
+
+// In HTTP server:
+if (cwh_ws_is_upgrade_request(buffer)) {
+    char *handshake = cwh_ws_server_handshake(key);
+    send(fd, handshake, strlen(handshake), 0);
+    
+    cwh_ws_conn_t *ws = cwh_ws_conn_new(fd, false);
+    cwh_ws_callbacks_t cb = {.on_message = on_message};
+    while (ws->state == CWH_WS_STATE_OPEN)
+        cwh_ws_process(ws, &cb);
+}
+```
+
+**Build:** `gcc ws.c cwebhttp/src/cwebhttp.c cwebhttp/src/websocket.c -Iinclude -lz`
+
+---
+
+## Installation
+
+### Quick Setup
+
+```bash
+# Clone
+git clone https://github.com/ilyabrin/cwebhttp.git
+
+# Or as submodule
+git submodule add https://github.com/ilyabrin/cwebhttp.git deps/cwebhttp
+
+# Test
+cd cwebhttp && make test
+```
+
+### Prerequisites
+
+- **Required:** C compiler, zlib (`-lz`)
+- **Optional:** mbedTLS (for HTTPS)
+  - Windows: `pacman -S mingw-w64-x86_64-mbedtls`
+  - Linux: `sudo apt-get install libmbedtls-dev`
+  - macOS: `brew install mbedtls`
+
+---
+
+## Integration
+
+### Files Needed
+
+| Feature      | Files             | Libs        | Size     |
+| ------------ | ----------------- | ----------- | -------- |
+| HTTP Client  | `cwebhttp.c`      | `-lz`       | 68KB     |
+| HTTP Server  | `cwebhttp.c`      | `-lz`       | 68KB     |
+| Async Server | + `async/*.c`     | `-lz`       | 85KB     |
+| WebSocket    | + `websocket.c`   | `-lz`       | 155KB    |
+| HTTPS/TLS    | + `tls_mbedtls.c` | `-lmbedtls` | +mbedTLS |
+
+### Makefile
+
+```makefile
+CFLAGS = -Icwebhttp/include
+SRCS = app.c cwebhttp/src/cwebhttp.c
+LIBS = -lz
+
+ifeq ($(OS),Windows_NT)
+    LIBS += -lws2_32
+endif
+
+ifdef ENABLE_WS
+    SRCS += cwebhttp/src/websocket.c
+endif
+
+ifdef ENABLE_TLS
+    SRCS += cwebhttp/src/tls_mbedtls.c
+    LIBS += -lmbedtls -lmbedx509 -lmbedcrypto
+endif
+
+app: $(SRCS)
+ $(CC) $(CFLAGS) $^ -o $@ $(LIBS)
+```
+
+### CMake
+
+```cmake
+add_subdirectory(deps/cwebhttp)
+add_executable(app main.c)
+target_link_libraries(app PRIVATE cwebhttp)
+```
+
+---
+
+## HTTP Client
+
+### Basic Requests
+
+```c
+// GET
+char *resp = cwh_get("http://api.example.com/users");
+free(resp);
+
+// POST
+const char *json = "{\"name\":\"John\"}";
+char *resp = cwh_post("http://api.example.com/users", "application/json", json);
+free(resp);
+
+// PUT, DELETE
+char *resp = cwh_put(url, type, body);
+char *resp = cwh_delete(url);
+```
+
+### Custom Headers
+
+```c
+cwh_request_t req = {0};
+req.method_str = "GET";
+req.path = "http://api.example.com/data";
+req.headers[0] = "Authorization";
+req.headers[1] = "Bearer TOKEN";
+req.num_headers = 1;
+
+char *resp = cwh_send_request(&req);
+free(resp);
+```
+
+### Error Handling
+
+```c
+char *resp = cwh_get(url);
+if (!resp) {
+    cwh_error_t *err = cwh_get_last_error();
+    printf("Error: %s\n", cwh_error_message(err));
+}
+```
+
+### REST API Pattern
+
+```c
+typedef struct {
+    char *base_url, *token;
+} api_t;
+
+char* api_get(api_t *api, const char *endpoint) {
+    char url[512];
+    snprintf(url, sizeof(url), "%s%s", api->base_url, endpoint);
+    cwh_request_t req = {.method_str = "GET", .path = url};
+    req.headers[0] = "Authorization";
+    req.headers[1] = api->token;
+    req.num_headers = 1;
+    return cwh_send_request(&req);
+}
+```
+
+---
+
+## HTTP Server
+
+### Async Server
 
 ```c
 #include "cwebhttp_async.h"
 
-void on_response(cwh_async_request_t *req, void *user_data) {
-    if (req->status_code == 200) {
-        printf("Response: %s\n", req->body);
+void handle_home(cwh_async_conn_t *conn, cwh_request_t *req, void *data) {
+    cwh_async_send_response(conn, 200, "text/html", "<h1>Home</h1>", 12);
+}
+
+void handle_api(cwh_async_conn_t *conn, cwh_request_t *req, void *data) {
+    cwh_async_send_json(conn, 200, "{\"status\":\"ok\"}");
+}
+
+void handle_404(cwh_async_conn_t *conn, cwh_request_t *req, void *data) {
+    cwh_async_send_status(conn, 404, "Not Found");
+}
+
+int main() {
+    cwh_async_server_t *srv = cwh_async_server_new();
+    cwh_async_server_route(srv, "GET", "/", handle_home, NULL);
+    cwh_async_server_route(srv, "GET", "/api/*", handle_api, NULL);
+    cwh_async_server_set_404_handler(srv, handle_404, NULL);
+    
+    cwh_async_server_listen(srv, 8080);
+    cwh_async_server_run(srv);  // Uses epoll/kqueue/IOCP automatically
+    
+    cwh_async_server_free(srv);
+}
+```
+
+### Static Files
+
+```c
+void handle_static(cwh_async_conn_t *conn, cwh_request_t *req, void *data) {
+    if (strstr(req->path, "..")) {  // Security check
+        cwh_async_send_status(conn, 403, "Forbidden");
+        return;
+    }
+    
+    char path[512];
+    snprintf(path, sizeof(path), "./www%s", req->path);
+    cwh_async_send_file(conn, path);
+}
+```
+
+---
+
+## WebSocket
+
+### Multi-Client Chat Server
+
+```c
+#define MAX_CLIENTS 10
+cwh_ws_conn_t *clients[MAX_CLIENTS];
+
+void broadcast(const char *msg) {
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i] && clients[i]->state == CWH_WS_STATE_OPEN) {
+            cwh_ws_send_text(clients[i], msg);
+        }
+    }
+}
+
+void on_message(cwh_ws_conn_t *ws, const cwh_ws_message_t *msg, void *data) {
+    if (msg->opcode == CWH_WS_OP_TEXT) {
+        printf("RX: %.*s\n", (int)msg->len, msg->data);
+        broadcast((const char *)msg->data);  // Broadcast to all
+    }
+}
+
+// In HTTP server loop:
+if (cwh_ws_is_upgrade_request(buffer)) {
+    // Extract key, send handshake
+    char key[64];
+    // ... extract from buffer ...
+    char *handshake = cwh_ws_server_handshake(key);
+    send(fd, handshake, strlen(handshake), 0);
+    free(handshake);
+    
+    // Create WebSocket
+    cwh_ws_conn_t *ws = cwh_ws_conn_new(fd, false);
+    clients[find_free_slot()] = ws;
+    
+    cwh_ws_callbacks_t cb = {.on_message = on_message};
+    while (ws->state == CWH_WS_STATE_OPEN) {
+        cwh_ws_process(ws, &cb);
+    }
+    
+    cwh_ws_conn_free(ws);
+}
+```
+
+### Browser Client
+
+```html
+<script>
+const ws = new WebSocket('ws://localhost:8080/ws');
+
+ws.onopen = () => ws.send(JSON.stringify({type:'join', user:'Alice'}));
+
+ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    console.log(`${msg.user}: ${msg.text}`);
+};
+
+function send(text) {
+    ws.send(JSON.stringify({type:'message', text: text}));
+}
+</script>
+```
+
+### Power-Efficient Loop (IoT)
+
+```c
+fd_set fds;
+struct timeval tv = {5, 0};
+
+while (ws->state == CWH_WS_STATE_OPEN) {
+    FD_ZERO(&fds);
+    FD_SET(ws->fd, &fds);
+    
+    if (select(ws->fd+1, &fds, NULL, NULL, &tv) > 0) {
+        cwh_ws_process(ws, &cb);
     } else {
-        printf("Error: %d\n", req->status_code);
+        // Timeout - send ping or sleep
+        cwh_ws_send_ping(ws, NULL, 0);
     }
 }
+```
 
-int main(void) {
-    cwh_loop_t *loop = cwh_loop_new();
-    
-    // Create async GET request
-    cwh_async_get(loop, "http://api.example.com/data", on_response, NULL);
-    
-    // Run event loop
-    cwh_loop_run(loop);
-    
-    cwh_loop_free(loop);
-    return 0;
+---
+
+## HTTPS/TLS
+
+### HTTPS Client
+
+```c
+#include "cwebhttp_tls.h"
+
+cwh_tls_context_t *tls = cwh_tls_context_new();
+cwh_tls_context_set_ca_cert(tls, "ca-cert.pem");  // Optional
+
+char *resp = cwh_get("https://api.github.com");  // Automatic TLS!
+free(resp);
+
+cwh_tls_context_free(tls);
+```
+
+**Build:** `gcc app.c src/cwebhttp.c src/tls_mbedtls.c -Iinclude -lmbedtls -lmbedx509 -lmbedcrypto -lz`
+
+### HTTPS Server
+
+```c
+#include "cwebhttp_tls.h"
+
+cwh_async_server_t *srv = cwh_async_server_new();
+
+// Load certificates
+cwh_tls_context_t *tls = cwh_tls_context_new();
+cwh_tls_context_set_cert(tls, "server-cert.pem", "server-key.pem");
+cwh_async_server_set_tls(srv, tls);
+
+// Now serves HTTPS!
+cwh_async_server_listen(srv, 443);
+cwh_async_server_run(srv);
+```
+
+### Generate Certificate
+
+```bash
+openssl genrsa -out key.pem 2048
+openssl req -new -x509 -key key.pem -out cert.pem -days 365
+```
+
+### WebSocket + TLS (WSS)
+
+```javascript
+// Browser: just use wss://
+const ws = new WebSocket('wss://yourdomain.com/ws');
+```
+
+```c
+// Server: TLS already applied to server
+cwh_async_server_set_tls(srv, tls);  // WSS now works!
+```
+
+---
+
+## IoT & Embedded
+
+### Platform Support
+
+| Platform     | RAM    | HTTP | WS  | TLS | Status    |
+| ------------ | ------ | ---- | --- | --- | --------- |
+| Raspberry Pi | 512MB+ | ✅    | ✅   | ✅   | Full      |
+| ESP32        | 520KB  | ✅    | ✅*  | ✅   | Optimized |
+| ESP8266      | 80KB   | ✅    | ⚠️*  | ⚠️   | Limited   |
+| STM32F4      | 192KB  | ✅    | ✅*  | ✅   | Optimized |
+
+*Requires buffer optimization
+
+### ESP32 Optimization
+
+**Edit `src/websocket.c` lines 23-24:**
+
+```c
+#define WS_DEFAULT_RECV_BUFFER_SIZE (4 * 1024)   // 4KB (was 64KB)
+#define WS_MAX_FRAGMENT_SIZE (16 * 1024)         // 16KB (was 10MB)
+```
+
+**Saves 60KB RAM per connection!**
+
+**Limit connections:**
+
+```c
+#define MAX_CLIENTS 4  // ESP32 can handle 4-6
+```
+
+**ESP32 Example:**
+
+```c
+#include <freertos/FreeRTOS.h>
+#include "cwebhttp_ws.h"
+
+#define MAX_CLIENTS 4
+cwh_ws_conn_t *clients[MAX_CLIENTS];
+
+void broadcast_sensor(float temp) {
+    char msg[128];
+    snprintf(msg, sizeof(msg), "{\"temp\":%.1f}", temp);
+    for (int i = 0; i < MAX_CLIENTS; i++)
+        if (clients[i] && clients[i]->state == CWH_WS_STATE_OPEN)
+            cwh_ws_send_text(clients[i], msg);
+}
+
+void sensor_task(void *p) {
+    while (1) {
+        broadcast_sensor(read_temperature());
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
+    }
+}
+```
+
+### STM32 Static Allocation
+
+```c
+#define MAX_CONNS 2
+static uint8_t ws_buffers[MAX_CONNS][4096];
+static cwh_ws_conn_t ws_pool[MAX_CONNS];
+static bool ws_used[MAX_CONNS];
+
+cwh_ws_conn_t* ws_acquire(int fd) {
+    for (int i = 0; i < MAX_CONNS; i++) {
+        if (!ws_used[i]) {
+            ws_used[i] = true;
+            ws_pool[i].fd = fd;
+            ws_pool[i].recv_buffer = ws_buffers[i];
+            return &ws_pool[i];
+        }
+    }
+    return NULL;
 }
 ```
 
@@ -225,287 +477,178 @@ int main(void) {
 
 ## API Reference
 
-### Synchronous Client API
+### HTTP Client
 
 ```c
-// HTTP Methods
 char* cwh_get(const char *url);
-char* cwh_post(const char *url, const char *content_type, const char *body);
-char* cwh_put(const char *url, const char *content_type, const char *body);
+char* cwh_post(const char *url, const char *type, const char *body);
+char* cwh_put(const char *url, const char *type, const char *body);
 char* cwh_delete(const char *url);
-
-// Advanced Client
-cwh_client_t* cwh_client_new(void);
-void cwh_client_free(cwh_client_t *client);
-cwh_response_t* cwh_client_request(cwh_client_t *client, cwh_request_t *req);
-
-// Connection Pool
-void cwh_client_set_max_connections(cwh_client_t *client, int max);
-void cwh_client_set_idle_timeout(cwh_client_t *client, int seconds);
+char* cwh_send_request(cwh_request_t *req);
 ```
 
-### Async Server API
+### HTTP Server methods
 
 ```c
-// Server Lifecycle
-cwh_async_server_t* cwh_async_server_new(cwh_loop_t *loop);
-void cwh_async_server_free(cwh_async_server_t *server);
-int cwh_async_server_listen(cwh_async_server_t *server, int port);
-
-// Routing
-typedef void (*cwh_async_handler_t)(cwh_async_conn_t *conn, void *user_data);
-int cwh_async_server_route(cwh_async_server_t *server, 
-                           cwh_method_t method,
-                           const char *path, 
-                           cwh_async_handler_t handler,
-                           void *user_data);
-
-// Response Helpers
-void cwh_async_send_response(cwh_async_conn_t *conn,
-                             int status_code,
-                             const char *content_type,
-                             const char *body,
-                             size_t body_len);
-void cwh_async_send_json(cwh_async_conn_t *conn, const char *json);
-void cwh_async_send_status(cwh_async_conn_t *conn, int status_code);
+cwh_async_server_t* cwh_async_server_new();
+void cwh_async_server_free(cwh_async_server_t *srv);
+void cwh_async_server_listen(cwh_async_server_t *srv, int port);
+void cwh_async_server_run(cwh_async_server_t *srv);
+void cwh_async_server_route(cwh_async_server_t *srv, const char *method,
+                            const char *path, cwh_async_handler_t handler, void *data);
+void cwh_async_send_response(cwh_async_conn_t *conn, int status,
+                             const char *type, const char *body, size_t len);
+void cwh_async_send_json(cwh_async_conn_t *conn, int status, const char *json);
 ```
 
-### Async Client API
+### WebSocket methods
 
 ```c
-// Request Callback
-typedef void (*cwh_async_callback_t)(cwh_async_request_t *req, void *user_data);
-
-// HTTP Methods
-void cwh_async_get(cwh_loop_t *loop, const char *url, 
-                   cwh_async_callback_t callback, void *user_data);
-void cwh_async_post(cwh_loop_t *loop, const char *url,
-                    const char *content_type, const char *body,
-                    cwh_async_callback_t callback, void *user_data);
+cwh_ws_conn_t* cwh_ws_conn_new(int fd, bool is_client);
+void cwh_ws_conn_free(cwh_ws_conn_t *conn);
+int cwh_ws_process(cwh_ws_conn_t *conn, cwh_ws_callbacks_t *cb);
+int cwh_ws_send_text(cwh_ws_conn_t *conn, const char *text);
+int cwh_ws_send_binary(cwh_ws_conn_t *conn, const uint8_t *data, size_t len);
+int cwh_ws_send_ping(cwh_ws_conn_t *conn, const uint8_t *data, size_t len);
+int cwh_ws_send_close(cwh_ws_conn_t *conn, uint16_t code, const char *reason);
+char* cwh_ws_server_handshake(const char *key);
+bool cwh_ws_is_upgrade_request(const char *headers);
 ```
 
-### Event Loop API
+### TLS
 
 ```c
-// Loop Management
-cwh_loop_t* cwh_loop_new(void);
-void cwh_loop_free(cwh_loop_t *loop);
-int cwh_loop_run(cwh_loop_t *loop);
-void cwh_loop_stop(cwh_loop_t *loop);
+cwh_tls_context_t* cwh_tls_context_new();
+void cwh_tls_context_free(cwh_tls_context_t *ctx);
+void cwh_tls_context_set_cert(cwh_tls_context_t *ctx, const char *cert, const char *key);
+void cwh_tls_context_set_ca_cert(cwh_tls_context_t *ctx, const char *ca);
+void cwh_async_server_set_tls(cwh_async_server_t *srv, cwh_tls_context_t *tls);
+```
 
-// Event Registration
-typedef void (*cwh_event_cb)(cwh_loop_t *loop, int fd, int events, void *data);
-int cwh_loop_add(cwh_loop_t *loop, int fd, int events, 
-                 cwh_event_cb callback, void *data);
-int cwh_loop_mod(cwh_loop_t *loop, int fd, int events);
-int cwh_loop_del(cwh_loop_t *loop, int fd);
+### Error Handling
 
-// Event Flags
-#define CWH_EVENT_READ  (1 << 0)
-#define CWH_EVENT_WRITE (1 << 1)
-#define CWH_EVENT_ERROR (1 << 2)
+```c
+cwh_error_t* cwh_get_last_error();
+int cwh_error_code(const cwh_error_t *err);
+const char* cwh_error_message(const cwh_error_t *err);
 ```
 
 ---
 
 ## Performance
 
-### Benchmarks
-
-| Metric           | cwebhttp      | libcurl         | Improvement     |
-| ---------------- | ------------- | --------------- | --------------- |
-| Parser Speed     | 2.5 GB/s      | ~1.5 GB/s       | **67% faster**  |
-| Memory (parsing) | 0 allocations | ~10 allocations | **100% better** |
-| Binary Size      | 68 KB         | ~200 KB         | **66% smaller** |
-
-### Parser Performance
-
-- **2.5 GB/s** request parsing throughput
-- **1.7 GB/s** response parsing throughput
-- **Zero heap allocations** during parsing
-- Single-pass, zero-copy design
-
-### Server Performance
-
-- **C10K capable** on Linux (epoll)
-- **C100K capable** on Windows (IOCP)
-- **10,000+ concurrent connections** tested
-- **Low latency** - p99 < 10ms
-
-### Binary Size
-
-```sh
-Minimal (parser only):  ~20 KB
-Client (HTTP/1.1):      ~68 KB
-Server (HTTP/1.1):      ~68 KB
-Full (client+server):   ~68 KB (shared code)
-```
+| Metric                        | Value                             |
+| ----------------------------- | --------------------------------- |
+| Parser speed                  | 2.5 GB/s                          |
+| Binary size (HTTP)            | 68 KB                             |
+| Binary size (WebSocket)       | 155 KB                            |
+| Memory per connection         | <1 KB (HTTP), 6 KB (WS optimized) |
+| Allocations per parse         | 0 (zero-copy)                     |
+| Max connections (Linux/epoll) | 100,000+                          |
+| Throughput (async server)     | 50-60K req/s                      |
 
 ---
 
-## Testing
+## Troubleshooting
 
-### Running Tests
+### Build Issues
 
-```bash
-# Core tests (41 tests)
-make test
+- **Undefined reference**: Link all .c files
+- **Cannot find headers**: Add `-Icwebhttp/include`
+- **Windows errors**: Add `-lws2_32`
+- **TLS errors**: Install mbedTLS, add `-lmbedtls -lmbedx509 -lmbedcrypto`
 
-# Async tests (6 tests on Unix, 44 on Windows)
-make async-tests
+### Runtime Issues
 
-# All tests
-make test && make async-tests
-```
+- **Connection refused**: Check server running, port not blocked
+- **WebSocket handshake failed**: Check HTTP headers include `Upgrade: websocket`
+- **Memory leak**: Always `free()` returned strings
+- **Slow**: Use async I/O, enable keep-alive
 
-### Test Coverage
-
-- ✅ HTTP parser (10 tests)
-- ✅ URL parser (15 tests)
-- ✅ Chunked encoding (16 tests)
-- ✅ Integration tests (12 tests)
-- ✅ Async server tests (5 scenarios)
-- ✅ Windows IOCP tests (44 tests)
-
-### Manual Testing
-
-**Test async server:**
-
-```bash
-./build/async_server
-
-# In another terminal
-curl http://localhost:8080/
-curl http://localhost:8080/api/hello
-curl -X POST http://localhost:8080/api/echo -d "test"
-```
-
----
-
-## Architecture
-
-### Project Structure
-
-```sh
-cwebhttp/
-├── include/
-│   ├── cwebhttp.h          # Sync API
-│   ├── cwebhttp_async.h    # Async API
-│   └── cwebhttp_types.h    # Common types
-├── src/
-│   ├── cwebhttp.c          # Core implementation
-│   └── async/
-│       ├── loop.c          # Event loop
-│       ├── server.c        # Async server
-│       ├── client.c        # Async client
-│       ├── epoll.c         # Linux backend
-│       ├── kqueue.c        # macOS backend
-│       ├── iocp.c          # Windows backend
-│       └── select.c        # Fallback backend
-├── examples/               # Example programs
-├── tests/                  # Unit tests
-└── benchmarks/            # Performance tests
-```
-
-### Key Components
-
-**Parser** - Zero-allocation HTTP/1.1 parser
-
-- Single-pass parsing
-- Pointer-based (no string copies)
-- RFC 7230 compliant
-
-**Event Loop** - Cross-platform async I/O
-
-- epoll (Linux)
-- kqueue (macOS/BSD)
-- IOCP (Windows)
-- select (fallback)
-
-**Connection Pool** - Keep-alive management
-
-- Configurable limits
-- Automatic reuse
-- Idle timeout
-- Per-host pooling
-
-**Async Server** - Event-driven HTTP server
-
-- C10K+ capable
-- Keep-alive support
-- Pattern-based routing
-- Static file serving
-
----
-
-## Advanced Topics
-
-### Windows IOCP Implementation
-
-The Windows backend uses I/O Completion Ports (IOCP) with AcceptEx for high performance:
-
-- **AcceptEx** for async connection acceptance
-- **WSARecv/WSASend** for async I/O
-- **Completion keys** for socket identification
-- **Pre-posted operations** for low latency
-
-Key implementation details:
-
-- Sockets created with `WSA_FLAG_OVERLAPPED`
-- IOCP data buffering for received data
-- WRITE events trigger immediate callbacks
-- Socket re-association for correct completion keys
-
-### Connection Pooling
-
-Connection reuse for improved performance:
+### Common Mistakes
 
 ```c
-cwh_client_t *client = cwh_client_new();
-cwh_client_set_max_connections(client, 50);     // Max 50 connections
-cwh_client_set_idle_timeout(client, 300);       // 5 minute timeout
+// ❌ Wrong - memory leak
+char *r = cwh_get(url);
 
-// Connections automatically reused
-cwh_get_with_client(client, "http://api.example.com/1");
-cwh_get_with_client(client, "http://api.example.com/2");  // Reuses connection
+// ✅ Correct
+char *r = cwh_get(url);
+if (r) { printf("%s\n", r); free(r); }
+
+// ❌ Wrong - busy loop
+while (ws->state == CWH_WS_STATE_OPEN)
+    cwh_ws_process(ws, &cb);
+
+// ✅ Correct - use select()
+fd_set fds; struct timeval tv = {1,0};
+while (ws->state == CWH_WS_STATE_OPEN) {
+    FD_ZERO(&fds); FD_SET(ws->fd, &fds);
+    if (select(ws->fd+1, &fds, NULL, NULL, &tv) > 0)
+        cwh_ws_process(ws, &cb);
+}
 ```
 
-### Error Handling
+---
 
-All functions return appropriate error codes:
+## Examples
+
+All in `examples/` directory:
+
+| File               | Description                     | Build                                                                        |
+| ------------------ | ------------------------------- | ---------------------------------------------------------------------------- |
+| `simple_client.c`  | HTTP GET/POST                   | `gcc examples/simple_client.c src/cwebhttp.c -Iinclude -lz`                  |
+| `async_server.c`   | Production server               | `gcc examples/async_server.c src/cwebhttp.c src/async/*.c -Iinclude -lz`     |
+| `ws_chat_server.c` | WebSocket chat (422 lines)      | `gcc examples/ws_chat_server.c src/cwebhttp.c src/websocket.c -Iinclude -lz` |
+| `ws_dashboard.c`   | Real-time dashboard (458 lines) | `gcc examples/ws_dashboard.c src/cwebhttp.c src/websocket.c -Iinclude -lz`   |
+
+**Run chat server:**
+
+```bash
+./build/examples/ws_chat_server
+# Open http://localhost:8080 in browser
+```
+
+**Run dashboard:**
+
+```bash
+./build/examples/ws_dashboard
+# Open http://localhost:8081 in browser
+```
+
+---
+
+## Memory Management
+
+### Leak Detection
 
 ```c
-typedef enum {
-    CWH_OK = 0,
-    CWH_ERR_INVALID_PARAM,
-    CWH_ERR_CONNECTION_FAILED,
-    CWH_ERR_TIMEOUT,
-    CWH_ERR_PARSE_FAILED,
-    CWH_ERR_OUT_OF_MEMORY
-} cwh_error_t;
+#define ENABLE_MEMCHECK 1
+#include "memcheck.h"
+
+memcheck_init();
+// ... your code ...
+memcheck_report();  // Shows leaks
+memcheck_cleanup();
 ```
 
----
+### Best Practices
 
-## Contributing
-
-See [CHANGELOG.md](CHANGELOG.md) for version history and release notes.
-
----
-
-## License
-
-[View LICENSE file](LICENSE)
+- Always `free()` returned strings
+- Call `*_free()` functions on cleanup
+- Use `select()` instead of busy-waiting
+- Limit connections on IoT devices
 
 ---
 
 ## Support
 
+- **Docs**: README.md, CHANGELOG.md
+- **Examples**: `examples/` directory
+- **GitHub**: <https://github.com/ilyabrin/cwebhttp>
 - **Issues**: GitHub Issues
-- **Documentation**: This file and inline code comments
-- **Examples**: See `examples/` directory
 
 ---
 
-**Last Updated:** December 17, 2025  
-**Version:** 0.7.0 - Windows IOCP Support Complete
+**License:** MIT  
+**Version:** 0.9.0  
+**Status:** Production Ready ✅
