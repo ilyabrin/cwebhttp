@@ -253,10 +253,15 @@ void cwh_error_clear(cwh_error_t *error)
 }
 
 // Thread-local error storage
-#ifdef _WIN32
+// GCC and Clang support __thread on all platforms
+#if defined(__GNUC__) || defined(__clang__)
+static __thread cwh_error_t tls_error = {0};
+#elif defined(_MSC_VER)
 __declspec(thread) static cwh_error_t tls_error = {0};
 #else
-static __thread cwh_error_t tls_error = {0};
+// Fallback: non-thread-safe static storage
+#warning "Thread-local storage not available, error handling is not thread-safe"
+static cwh_error_t tls_error = {0};
 #endif
 
 cwh_error_t *cwh_get_last_error(void)
